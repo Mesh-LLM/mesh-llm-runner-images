@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 myoung34/github-runner:2.333.0-ubuntu-jammy
+FROM myoung34/github-runner:2.334.0-ubuntu-jammy
 
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -11,4 +11,4 @@ RUN chmod +x /usr/local/bin/install-cuda-toolchain.sh \
 
 ENV CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:/usr/local/nvidia/bin:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
