@@ -46,6 +46,6 @@ jobs:
           {
             echo '## Published image'
             echo
-            echo '- `ghcr.io/mesh-llm/mesh-llm-cuda-runner:${{ inputs.image_tag }}`'
-            echo '- `ghcr.io/mesh-llm/mesh-llm-cuda-runner:latest`'
+            echo "- \`ghcr.io/mesh-llm/mesh-llm-cuda-runner:${{ inputs.image_tag }}\`"
+            echo "- \`ghcr.io/mesh-llm/mesh-llm-cuda-runner:latest\`"
           } >> "$GITHUB_STEP_SUMMARY"
