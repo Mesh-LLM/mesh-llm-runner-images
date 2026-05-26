@@ -1,5 +1,7 @@
 FROM myoung34/github-runner:2.334.0-ubuntu-jammy
 
+LABEL org.opencontainers.image.source="https://github.com/Mesh-LLM/mesh-llm-runner-images"
+
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
