@@ -77,7 +77,7 @@ jobs:
 
   build-test:
     needs: prepare
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -86,8 +86,10 @@ jobs:
         include:
           - platform: linux/amd64
             platform_id: amd64
+            runner: ubuntu-24.04
           - platform: linux/arm64
             platform_id: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout runner image sources
         uses: actions/checkout@v7
@@ -97,9 +99,6 @@ jobs:
         with:
           name: mesh-manifest-bundles
           path: build-context/manifests
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -117,8 +116,84 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
           cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
 
-  publish:
+  publish-platform:
     needs: [prepare, build-test]
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push)
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [public, self-hosted]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            platform_id: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            platform_id: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout runner image sources
+        uses: actions/checkout@v7
+
+      - name: Download manifest bundles
+        uses: actions/download-artifact@v8
+        with:
+          name: mesh-manifest-bundles
+          path: build-context/manifests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push architecture image by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: ${{ matrix.environment }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            io.mesh-llm.runner.environment=${{ matrix.environment }}
+            io.mesh-llm.source.revision=${{ needs.prepare.outputs.mesh_revision }}
+          build-args: |
+            RUNNER_ENVIRONMENT=${{ matrix.environment }}
+            MESH_LLM_REVISION=${{ needs.prepare.outputs.mesh_revision }}
+          cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Export digest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.environment }}-${{ matrix.platform_id }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [prepare, publish-platform]
     if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push)
     runs-on: ubuntu-24.04
     permissions:
@@ -131,17 +206,12 @@ jobs:
       matrix:
         environment: [public, self-hosted]
     steps:
-      - name: Checkout runner image sources
-        uses: actions/checkout@v7
-
-      - name: Download manifest bundles
+      - name: Download architecture digests
         uses: actions/download-artifact@v8
         with:
-          name: mesh-manifest-bundles
-          path: build-context/manifests
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+          pattern: digests-${{ matrix.environment }}-*
+          path: /tmp/digests
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -162,36 +232,43 @@ jobs:
             type=raw,value=${{ matrix.environment }}-latest
             type=raw,value=${{ matrix.environment }}-${{ needs.prepare.outputs.timestamp }}
             type=raw,value=${{ matrix.environment }}-sha-${{ needs.prepare.outputs.mesh_revision_short }}
-          labels: |
-            io.mesh-llm.runner.environment=${{ matrix.environment }}
-            io.mesh-llm.source.revision=${{ needs.prepare.outputs.mesh_revision }}
 
-      - name: Build and push multi-architecture image
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: ${{ matrix.environment }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.image_metadata.outputs.tags }}
-          labels: ${{ steps.image_metadata.outputs.labels }}
-          build-args: |
-            RUNNER_ENVIRONMENT=${{ matrix.environment }}
-            MESH_LLM_REVISION=${{ needs.prepare.outputs.mesh_revision }}
-          cache-from: |
-            type=gha,scope=${{ matrix.environment }}-amd64
-            type=gha,scope=${{ matrix.environment }}-arm64
-            type=gha,scope=${{ matrix.environment }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}
-          provenance: mode=max
-          sbom: true
+      - name: Create multi-architecture manifest
+        id: manifest
+        shell: bash
+        env:
+          METADATA_JSON: ${{ steps.image_metadata.outputs.json }}
+        run: |
+          mapfile -t tags < <(jq -r '.tags[]' <<< "$METADATA_JSON")
+          tag_arguments=()
+          for tag in "${tags[@]}"; do
+            tag_arguments+=(--tag "$tag")
+          done
 
-      - name: Attest pushed image
+          sources=()
+          for digest_file in /tmp/digests/*; do
+            sources+=("${IMAGE}@sha256:$(basename "$digest_file")")
+          done
+          test "${#sources[@]}" -eq 2
+
+          docker buildx imagetools create "${tag_arguments[@]}" "${sources[@]}"
+          manifest_json="$(docker buildx imagetools inspect "${tags[0]}" --format '{{json .Manifest}}')"
+          raw_manifest="$(docker buildx imagetools inspect "${tags[0]}" --raw)"
+          digest="$(jq -r '.digest' <<< "$manifest_json")"
+          [[ "$digest" == sha256:* ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+          for architecture in amd64 arm64; do
+            jq -e --arg architecture "$architecture" \
+              '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture)' \
+              <<< "$raw_manifest" >/dev/null
+          done
+
+      - name: Attest pushed manifest
         uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
           push-to-registry: true
 
       - name: Publish summary
@@ -199,7 +276,7 @@ jobs:
           {
             echo "## ${{ matrix.environment }} image"
             echo
-            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- digest: \`${{ steps.manifest.outputs.digest }}\`"
             echo "- MeshLLM revision: \`${{ needs.prepare.outputs.mesh_revision }}\`"
             echo "- architectures: \`linux/amd64\`, \`linux/arm64\`"
           } >> "$GITHUB_STEP_SUMMARY"
