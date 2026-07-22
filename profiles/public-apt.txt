@@ -1,0 +1,2 @@
+# Public jobs run inside this image on a GitHub-hosted VM.
+# Environment-specific packages can be added here without changing self-hosted runners.

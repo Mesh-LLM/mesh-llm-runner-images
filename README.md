@@ -1,55 +1,59 @@
-# mesh-llm-runner-images
+# MeshLLM runner images
 
-Build and publish sources for the Mesh-LLM self-hosted runner images.
+This repository builds one multi-architecture MeshLLM CI image package with two tags derived from the same core toolchain:
 
-## Published image
+- `ghcr.io/mesh-llm/mesh-llm-cuda-runner:public-latest` — used as a GitHub-hosted job container.
+- `ghcr.io/mesh-llm/mesh-llm-cuda-runner:self-hosted-latest` — used by Actions Runner Controller (ARC) runner pods.
 
-- `ghcr.io/mesh-llm/mesh-llm-cuda-runner:v3`
+Both tags support `linux/amd64` and `linux/arm64`. The self-hosted AMD64 image also contains CUDA 12.9; the ARM64 image deliberately omits CUDA because the K3s ARM pools are CPU builders. The existing GHCR package name is retained to avoid a registry and credential migration.
 
-## Runner base
+## Design
 
-- GitHub Actions runner: `2.334.0` via `myoung34/github-runner:2.334.0-ubuntu-jammy`
+The image has three layers of configuration:
 
-## Repository layout
+1. `profiles/common-apt.txt` is the shared operating-system toolchain found in MeshLLM CI and build scripts.
+2. `profiles/public-apt.txt` and `profiles/self-hosted-apt.txt` contain environment-only additions.
+3. `scripts/prepare-build-context.sh` checks out the requested MeshLLM revision, discovers its Rust, Node, Python, and Go manifests, and creates one bundle per runner environment. The Docker build injects the matching bundle and warms Cargo, pnpm, npm, and Python dependencies.
 
-- `Dockerfile` - CUDA-capable runner image based on `myoung34/github-runner`
-- `scripts/install-cuda-toolchain.sh` - installs CUDA toolkit and build dependencies
-- `.github/workflows/` - CI and publish workflows for this image repo
+The manifest bundle is content-addressed in `manifest-index.json`. Cargo target stubs retain the complete workspace graph without copying or publishing MeshLLM source code in the runner image.
 
-## Workflows
+## Local build
 
-- `Build Test` - validates the image builds on pull requests and manual dispatch
-- `Publish GHCR` - publishes `ghcr.io/mesh-llm/mesh-llm-cuda-runner`
+```bash
+scripts/prepare-build-context.sh /Users/ndizazzo/dev/mesh/mesh-llm
 
-## Manual workflow inputs
+docker buildx build \
+  --platform linux/amd64 \
+  --target public \
+  --build-arg RUNNER_ENVIRONMENT=public \
+  --build-arg MESH_LLM_REVISION="$(git -C /Users/ndizazzo/dev/mesh/mesh-llm rev-parse HEAD)" \
+  --load \
+  -t mesh-llm-runner:public .
 
-- `Publish GHCR`
-  - `image_tag` (default `v3`)
+docker run --rm --entrypoint verify-runner-image mesh-llm-runner:public public
+```
 
-The workflow path is now the supported way to build and publish the image.
+Use target `self-hosted` and `RUNNER_ENVIRONMENT=self-hosted` for the ARC image. Set `INSTALL_CUDA=0` only for a local fast build; published self-hosted AMD64 images always install CUDA.
 
-## Carrack runner upgrade runbook
+## Maintenance pipeline
 
-GitHub warned that older self-hosted runner versions will soon be unsupported. Upgrade Carrack outside any active release validation window before depending on it for production release validation.
+`.github/workflows/build-and-push.yml` runs on pull requests, pushes to `main`, a weekly schedule, and manual dispatch. It:
 
-1. Drain Carrack: confirm no release validation or long GPU/CPU jobs are running.
-2. From the Carrack runner service directory, stop the service:
+1. checks out the requested MeshLLM ref;
+2. generates and uploads both manifest bundles;
+3. builds and executes each environment on AMD64 and ARM64;
+4. publishes multi-platform tags, SBOMs, provenance, and GitHub attestations to GHCR.
 
-   ```bash
-   sudo ./svc.sh stop
-   ```
+Published tags are:
 
-3. Apply the latest supported Linux x64 GitHub Actions runner package from the official `actions/runner` release page. Do not rerun `config.sh` or mint a registration token unless the runner must be re-registered.
-4. Restart and check the service:
+- `<environment>-latest`
+- `<environment>-YYYYMMDDHHMMSS` for Flux image automation
+- `<environment>-sha-<MeshLLM revision>` for source traceability
 
-   ```bash
-   sudo ./svc.sh start
-   sudo ./svc.sh status
-   ```
+## Consumers
 
-5. In GitHub, confirm the Carrack runner reports all labels targeted by `runner=carrack` workflows:
-   - `self-hosted`
-   - `Linux`
-   - `X64`
-6. Run a cheap Carrack smoke slice first.
-7. Repeat one known green phased row, such as `ubuntu-cpu-amd64` or `alpine-cpu-amd64`, before relying on Carrack for longer GPU/CPU validation.
+- `examples/workflows/public-github-hosted.yml` runs on `ubuntu-24.04` with the public image through job-level `container:`.
+- `examples/workflows/k3s-self-hosted.yml` targets the `mesh-llm-amd64` and `mesh-llm-arm64` ARC scale sets. It does not add another job container: the ephemeral ARC pod is already the self-hosted image.
+- `scripts/verify-end-to-end.sh` verifies the registry manifest lists and executes both architectures. Add `--cluster` to reconcile Flux and inspect ARC resources.
+
+See `docs/AUDIT.md` for the source audit and `docs/OPERATIONS.md` for rollout and acceptance steps.
