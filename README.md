@@ -11,11 +11,11 @@ Both tags support `linux/amd64` and `linux/arm64`. The self-hosted AMD64 image a
 
 The image has three layers of configuration:
 
-1. `profiles/common-apt.txt` is the shared operating-system toolchain found in MeshLLM CI and build scripts.
-2. `profiles/public-apt.txt` and `profiles/self-hosted-apt.txt` contain environment-only additions.
+1. `profiles/common.yml` is the shared operating-system toolchain found in MeshLLM CI and build scripts.
+2. `profiles/public.yml` and `profiles/self-hosted.yml` contain environment-only additions.
 3. `scripts/prepare-build-context.sh` checks out the requested MeshLLM revision, discovers its Rust, Node, Python, and Go manifests, and creates one bundle per runner environment. The Docker build injects the matching bundle and warms Cargo, pnpm, npm, and Python dependencies.
 
-The manifest bundle is content-addressed in `manifest-index.json`. Cargo target stubs retain the complete workspace graph without copying or publishing MeshLLM source code in the runner image.
+The YAML profiles use a deliberately small schema (`schema`, `profile`, and `apt.packages`) that is parsed by portable Bash without Python or Ruby. The manifest bundle is content-addressed in `manifest-index.json`. Cargo target stubs retain the complete workspace graph without copying or publishing MeshLLM source code in the runner image.
 
 ## Local build
 

@@ -1,0 +1,11 @@
+---
+schema: 1
+profile: self-hosted
+apt:
+  packages:
+    - dnsutils
+    - iproute2
+    - iputils-ping
+    - netcat-openbsd
+    - openssh-client
+    - procps

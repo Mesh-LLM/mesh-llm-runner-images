@@ -30,15 +30,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-COPY profiles/common-apt.txt /tmp/common-apt.txt
-COPY profiles/${RUNNER_ENVIRONMENT}-apt.txt /tmp/environment-apt.txt
-RUN packages="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /tmp/common-apt.txt /tmp/environment-apt.txt | sort -u | tr '\n' ' ')" \
+COPY profiles/common.yml /tmp/profiles/common.yml
+COPY profiles/${RUNNER_ENVIRONMENT}.yml /tmp/profiles/environment.yml
+COPY scripts/profile-packages.sh /usr/local/bin/profile-packages
+RUN chmod 0755 /usr/local/bin/profile-packages \
+    && mapfile -t packages < <(profile-packages /tmp/profiles/common.yml /tmp/profiles/environment.yml) \
+    && test "${#packages[@]}" -gt 0 \
     && apt-get update \
     && apt-get install -y --no-install-recommends software-properties-common \
     && add-apt-repository -y universe \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ${packages} \
-    && rm -f /tmp/common-apt.txt /tmp/environment-apt.txt \
+    && apt-get install -y --no-install-recommends "${packages[@]}" \
+    && rm -rf /tmp/profiles \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
