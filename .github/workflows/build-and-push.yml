@@ -104,27 +104,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build test image
+      - name: Build and verify test image
         uses: docker/build-push-action@v7
         with:
           context: .
-          target: ${{ matrix.environment }}
+          target: ${{ matrix.environment }}-test
           platforms: ${{ matrix.platform }}
-          load: true
           push: false
-          tags: mesh-llm-runner:test-${{ matrix.environment }}-${{ matrix.platform_id }}
           build-args: |
             RUNNER_ENVIRONMENT=${{ matrix.environment }}
             MESH_LLM_REVISION=${{ needs.prepare.outputs.mesh_revision }}
           cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
           cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
-
-      - name: Verify tools, manifests, and architecture
-        run: |
-          docker run --rm --platform "${{ matrix.platform }}" \
-            --entrypoint /usr/local/bin/verify-runner-image \
-            "mesh-llm-runner:test-${{ matrix.environment }}-${{ matrix.platform_id }}" \
-            "${{ matrix.environment }}"
 
   publish:
     needs: [prepare, build-test]

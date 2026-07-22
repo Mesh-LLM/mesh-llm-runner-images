@@ -75,6 +75,9 @@ ENV MESH_RUNNER_ENVIRONMENT=public
 ENTRYPOINT []
 CMD ["/bin/bash"]
 
+FROM public AS public-test
+RUN /usr/local/bin/verify-runner-image public
+
 FROM toolchain AS self-hosted
 
 USER root
@@ -104,3 +107,6 @@ ENV MESH_RUNNER_ENVIRONMENT=self-hosted \
 WORKDIR /home/runner
 USER runner
 ENTRYPOINT ["/home/runner/run.sh"]
+
+FROM self-hosted AS self-hosted-test
+RUN /usr/local/bin/verify-runner-image self-hosted
