@@ -265,6 +265,7 @@ jobs:
           done
 
       - name: Attest pushed manifest
+        if: github.event.repository.visibility == 'public'
         uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}
