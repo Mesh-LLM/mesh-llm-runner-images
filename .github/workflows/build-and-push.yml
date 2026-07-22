@@ -1,0 +1,214 @@
+name: Build and Push Runner Images
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      mesh_ref:
+        description: MeshLLM git ref whose manifests should be injected
+        required: true
+        default: main
+      push:
+        description: Push images to GHCR after tests
+        type: boolean
+        required: true
+        default: true
+
+concurrency:
+  group: runner-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/mesh-llm/mesh-llm-cuda-runner
+  MESH_REF: ${{ inputs.mesh_ref || 'main' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      mesh_revision: ${{ steps.metadata.outputs.mesh_revision }}
+      mesh_revision_short: ${{ steps.metadata.outputs.mesh_revision_short }}
+      timestamp: ${{ steps.metadata.outputs.timestamp }}
+    steps:
+      - name: Checkout runner image sources
+        uses: actions/checkout@v5
+
+      - name: Checkout MeshLLM source
+        uses: actions/checkout@v5
+        with:
+          repository: Mesh-LLM/mesh-llm
+          ref: ${{ env.MESH_REF }}
+          path: _target/mesh-llm
+
+      - name: Capture source metadata
+        id: metadata
+        run: |
+          revision="$(git -C _target/mesh-llm rev-parse HEAD)"
+          {
+            echo "mesh_revision=$revision"
+            echo "mesh_revision_short=${revision:0:12}"
+            echo "timestamp=$(date -u +%Y%m%d%H%M%S)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate environment manifest bundles
+        run: scripts/prepare-build-context.sh _target/mesh-llm
+
+      - name: Summarize manifest audit
+        run: |
+          for profile in public self-hosted; do
+            count="$(jq '.manifests | length' "build-context/manifests/$profile/manifest-index.json")"
+            echo "$profile: $count manifests"
+          done
+
+      - name: Upload manifest bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-manifest-bundles
+          path: build-context/manifests
+          if-no-files-found: error
+          retention-days: 1
+
+  build-test:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [public, self-hosted]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            platform_id: amd64
+          - platform: linux/arm64
+            platform_id: arm64
+    steps:
+      - name: Checkout runner image sources
+        uses: actions/checkout@v5
+
+      - name: Download manifest bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: mesh-manifest-bundles
+          path: build-context/manifests
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.environment }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: mesh-llm-runner:test-${{ matrix.environment }}-${{ matrix.platform_id }}
+          build-args: |
+            RUNNER_ENVIRONMENT=${{ matrix.environment }}
+            MESH_LLM_REVISION=${{ needs.prepare.outputs.mesh_revision }}
+          cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
+
+      - name: Verify tools, manifests, and architecture
+        run: |
+          docker run --rm --platform "${{ matrix.platform }}" \
+            --entrypoint /usr/local/bin/verify-runner-image \
+            "mesh-llm-runner:test-${{ matrix.environment }}-${{ matrix.platform_id }}" \
+            "${{ matrix.environment }}"
+
+  publish:
+    needs: [prepare, build-test]
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [public, self-hosted]
+    steps:
+      - name: Checkout runner image sources
+        uses: actions/checkout@v5
+
+      - name: Download manifest bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: mesh-manifest-bundles
+          path: build-context/manifests
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: image_metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ matrix.environment }}-latest
+            type=raw,value=${{ matrix.environment }}-${{ needs.prepare.outputs.timestamp }}
+            type=raw,value=${{ matrix.environment }}-sha-${{ needs.prepare.outputs.mesh_revision_short }}
+          labels: |
+            io.mesh-llm.runner.environment=${{ matrix.environment }}
+            io.mesh-llm.source.revision=${{ needs.prepare.outputs.mesh_revision }}
+
+      - name: Build and push multi-architecture image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.environment }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image_metadata.outputs.tags }}
+          labels: ${{ steps.image_metadata.outputs.labels }}
+          build-args: |
+            RUNNER_ENVIRONMENT=${{ matrix.environment }}
+            MESH_LLM_REVISION=${{ needs.prepare.outputs.mesh_revision }}
+          cache-from: |
+            type=gha,scope=${{ matrix.environment }}-amd64
+            type=gha,scope=${{ matrix.environment }}-arm64
+            type=gha,scope=${{ matrix.environment }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Attest pushed image
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Publish summary
+        run: |
+          {
+            echo "## ${{ matrix.environment }} image"
+            echo
+            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- MeshLLM revision: \`${{ needs.prepare.outputs.mesh_revision }}\`"
+            echo "- architectures: \`linux/amd64\`, \`linux/arm64\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,7 @@
+# ARC runner pods need cluster/network diagnostics for operational triage.
+dnsutils
+iproute2
+iputils-ping
+netcat-openbsd
+openssh-client
+procps

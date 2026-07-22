@@ -1,0 +1,25 @@
+name: MeshLLM K3s Runner Pools
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner_scale_set: mesh-llm-amd64
+            expected_arch: x86_64
+          - runner_scale_set: mesh-llm-arm64
+            expected_arch: aarch64
+    runs-on: ${{ matrix.runner_scale_set }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prove environment and build
+        run: |
+          verify-runner-image self-hosted
+          test "$(uname -m)" = "${{ matrix.expected_arch }}"
+          cargo check -p mesh-llm-config
