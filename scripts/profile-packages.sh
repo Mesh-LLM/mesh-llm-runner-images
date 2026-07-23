@@ -8,7 +8,7 @@ fi
 
 read_profile() {
   local profile_file="$1"
-  local line package
+  local line package profile_name
   local packages_started=0
   local packages_found=0
 
@@ -19,7 +19,14 @@ read_profile() {
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     case "$line" in
-      ""|---|"schema: 1"|"profile: common"|"profile: public"|"profile: self-hosted"|apt:|\#*) ;;
+      ""|---|"schema: 1"|apt:|\#*) ;;
+      "profile: "*)
+        profile_name="${line#"profile: "}"
+        [[ "$profile_name" =~ ^[a-z][a-z0-9-]*$ ]] || {
+          echo "invalid profile name in $profile_file: $profile_name" >&2
+          return 1
+        }
+        ;;
       "  packages:")
         packages_started=1
         packages_found=1

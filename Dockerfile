@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
+ARG BACKEND=cpu
+
 FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-noble AS toolchain
 
 ARG TARGETARCH
@@ -73,43 +75,94 @@ RUN chmod 0755 /usr/local/bin/verify-runner-image \
 WORKDIR /workspace
 USER runner
 
-FROM toolchain AS public
+FROM toolchain AS backend-cpu
+
+FROM toolchain AS backend-vulkan
+
+FROM toolchain AS backend-cuda
+
+USER root
+ARG TARGETARCH
+ARG INSTALL_CUDA=1
+ARG CUDA_SERIES=12-9
+COPY scripts/install-cuda-toolchain.sh /usr/local/bin/install-cuda-toolchain
+RUN chmod 0755 /usr/local/bin/install-cuda-toolchain \
+    && TARGETARCH="${TARGETARCH}" INSTALL_CUDA="${INSTALL_CUDA}" CUDA_SERIES="${CUDA_SERIES}" \
+       /usr/local/bin/install-cuda-toolchain
+ENV CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+USER runner
+
+FROM toolchain AS backend-rocm
+
+USER root
+ARG TARGETARCH
+ARG INSTALL_ROCM=1
+ARG ROCM_VERSION=7.2.3
+COPY scripts/install-rocm-toolchain.sh /usr/local/bin/install-rocm-toolchain
+RUN chmod 0755 /usr/local/bin/install-rocm-toolchain \
+    && TARGETARCH="${TARGETARCH}" INSTALL_ROCM="${INSTALL_ROCM}" ROCM_VERSION="${ROCM_VERSION}" \
+       /usr/local/bin/install-rocm-toolchain
+ENV ROCM_PATH=/opt/rocm \
+    PATH=/opt/rocm/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/rocm/lib
+USER runner
+
+ARG BACKEND
+FROM backend-${BACKEND} AS selected-backend
+
+ARG BACKEND
+ARG CUDA_SERIES=none
+ARG ROCM_VERSION=none
+USER root
+COPY profiles/backends/${BACKEND}.yml /tmp/profiles/backend.yml
+RUN profile-packages /tmp/profiles/backend.yml > /tmp/profiles/backend-packages.txt \
+    && mapfile -t packages < /tmp/profiles/backend-packages.txt \
+    && if (( ${#packages[@]} > 0 )); then \
+         apt-get update; \
+         apt-get install -y --no-install-recommends "${packages[@]}"; \
+       fi \
+    && rm -f /tmp/profiles/backend.yml /tmp/profiles/backend-packages.txt \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s\n' "${BACKEND}" > /etc/mesh-runner-backend \
+    && printf '%s\n' "${CUDA_SERIES}" > /etc/mesh-runner-cuda-series \
+    && printf '%s\n' "${ROCM_VERSION}" > /etc/mesh-runner-rocm-version
+ENV MESH_RUNNER_BACKEND=${BACKEND}
+USER runner
+
+FROM selected-backend AS public
 ENV MESH_RUNNER_ENVIRONMENT=public
 ENTRYPOINT []
 CMD ["/bin/bash"]
 
 FROM public AS public-test
-RUN /usr/local/bin/verify-runner-image public
+ARG BACKEND
+RUN /usr/local/bin/verify-runner-image public "${BACKEND}"
 
-FROM toolchain AS self-hosted
+FROM selected-backend AS self-hosted
 
 USER root
 ARG TARGETARCH
 ARG RUNNER_VERSION=2.336.0
 ARG RUNNER_SHA256_AMD64=04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d
 ARG RUNNER_SHA256_ARM64=58b758e420b87093fbd4bfddd368074960053e2f1388f01848c82624b90f27d1
-ARG INSTALL_CUDA=1
-ARG CUDA_SERIES=12-9
 
 COPY scripts/install-actions-runner.sh /usr/local/bin/install-actions-runner
-COPY scripts/install-cuda-toolchain.sh /usr/local/bin/install-cuda-toolchain
-RUN chmod 0755 /usr/local/bin/install-actions-runner /usr/local/bin/install-cuda-toolchain \
+RUN chmod 0755 /usr/local/bin/install-actions-runner \
     && TARGETARCH="${TARGETARCH}" RUNNER_VERSION="${RUNNER_VERSION}" \
        RUNNER_SHA256_AMD64="${RUNNER_SHA256_AMD64}" RUNNER_SHA256_ARM64="${RUNNER_SHA256_ARM64}" \
-       /usr/local/bin/install-actions-runner \
-    && TARGETARCH="${TARGETARCH}" INSTALL_CUDA="${INSTALL_CUDA}" CUDA_SERIES="${CUDA_SERIES}" \
-       /usr/local/bin/install-cuda-toolchain
+       /usr/local/bin/install-actions-runner
 
 ENV MESH_RUNNER_ENVIRONMENT=self-hosted \
     RUNNER_MANUALLY_TRAP_SIG=1 \
-    ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1 \
-    CUDA_HOME=/usr/local/cuda \
-    PATH=/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+    ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1
 
 WORKDIR /home/runner
 USER runner
 ENTRYPOINT ["/home/runner/run.sh"]
 
 FROM self-hosted AS self-hosted-test
-RUN /usr/local/bin/verify-runner-image self-hosted
+ARG BACKEND
+RUN /usr/local/bin/verify-runner-image self-hosted "${BACKEND}"
