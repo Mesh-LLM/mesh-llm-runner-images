@@ -37,7 +37,7 @@ apt-get install -y --no-install-recommends \
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 
-command -v hipcc >/dev/null
 test -d /opt/rocm
+test -x /opt/rocm/bin/hipcc
 test -f /opt/rocm/include/hipblas/hipblas.h
 find /opt/rocm/lib -name 'librocblas.so*' -print -quit | grep -q .
