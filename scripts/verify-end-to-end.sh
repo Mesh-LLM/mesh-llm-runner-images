@@ -4,12 +4,10 @@ set -euo pipefail
 image="${IMAGE:-ghcr.io/mesh-llm/mesh-llm-cuda-runner}"
 public_tag="${PUBLIC_TAG:-public-latest}"
 self_hosted_tag="${SELF_HOSTED_TAG:-self-hosted-latest}"
-cluster_checks=false
 all_backends=false
 
 for argument in "$@"; do
   case "$argument" in
-    --cluster) cluster_checks=true ;;
     --all-backends) all_backends=true ;;
     *) echo "unknown argument: $argument" >&2; exit 2 ;;
   esac
@@ -52,28 +50,6 @@ verify_image() {
   verify_local_execution "$reference" "$environment" "$backend" "$@"
 }
 
-verify_cluster() {
-  require_command kubectl
-  if command -v flux >/dev/null; then
-    flux reconcile kustomization cluster-apps --with-source
-    flux get helmreleases --all-namespaces
-  else
-    requested_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    kubectl annotate gitrepository/patio51-cluster -n flux-system \
-      "reconcile.fluxcd.io/requestedAt=$requested_at" --overwrite
-    kubectl annotate kustomization/cluster-apps -n flux-system \
-      "reconcile.fluxcd.io/requestedAt=$requested_at" --overwrite
-    kubectl wait --for=condition=Ready kustomization/cluster-apps -n flux-system --timeout=5m
-    kubectl get helmreleases.helm.toolkit.fluxcd.io --all-namespaces
-  fi
-  kubectl wait --for=condition=Ready helmrelease/arc-controller -n arc-systems --timeout=5m
-  kubectl wait --for=condition=Ready helmrelease/mesh-llm-arm64 -n arc-runners --timeout=5m
-  kubectl wait --for=condition=Ready helmrelease/mesh-llm-amd64 -n arc-runners --timeout=5m
-  kubectl get autoscalingrunnersets.actions.github.com -n arc-runners -o wide
-  kubectl get pods -n arc-runners \
-    -o 'custom-columns=NAME:.metadata.name,ARCH:.spec.nodeSelector.kubernetes\.io/arch,IMAGE:.spec.containers[0].image,NODE:.spec.nodeName'
-}
-
 require_command docker
 require_command jq
 
@@ -91,10 +67,6 @@ if [[ "$all_backends" == true ]]; then
     verify_image "$environment-rocm70-latest" "$environment" rocm amd64
     verify_image "$environment-rocm72-latest" "$environment" rocm amd64
   done
-fi
-
-if [[ "$cluster_checks" == true ]]; then
-  verify_cluster
 fi
 
 echo "runner image verification passed"

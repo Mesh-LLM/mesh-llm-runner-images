@@ -33,7 +33,7 @@ The workflows repeatedly install these groups:
 - System libraries: OpenSSL, D-Bus, curl, and standard packaging utilities.
 - Vulkan compilation: `glslc`, `libvulkan-dev`, and `spirv-headers`.
 - CI/diagnostics: Python 3 with venv/pip, curl, git/LFS, jq, lsof, patchelf, rsync, and shellcheck.
-- GPU specializations: versioned CUDA and ROCm compiler/library overlays, plus a Vulkan SDK overlay. Runtime GPU access still depends on the selected ARC pool and node hardware.
+- GPU specializations: versioned CUDA and ROCm compiler/library overlays, plus a Vulkan SDK overlay. Runtime GPU access remains a consumer-side hardware concern.
 
 ## Environment policy
 
@@ -46,4 +46,4 @@ The public and self-hosted variants intentionally receive the same project manif
 | CUDA 12/13 | yes | yes | `nvcc`, CUDA runtime headers, cuBLAS headers/libraries |
 | ROCm 7.0/7.2 | yes | no | HIP compiler, HIP/rocBLAS headers and libraries |
 
-Every backend has a `public` job-container target and a `self-hosted` ARC target. The latter adds only the Actions runner and cluster diagnostics. GPU execution tests remain restricted to appropriately labelled nodes; building a GPU image does not imply that its host exposes that GPU.
+Every backend has a `public` job-container target and a `self-hosted` target. The latter adds the GitHub Actions runner. Building a GPU image verifies its compiler and SDK contract but does not imply that a consumer exposes matching GPU hardware.

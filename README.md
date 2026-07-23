@@ -1,6 +1,6 @@
 # MeshLLM runner images
 
-This repository builds a backend-specialized MeshLLM CI image family from one shared core toolchain. Every backend is available as a GitHub-hosted job container (`public`) and an Actions Runner Controller pod (`self-hosted`):
+This repository builds a backend-specialized MeshLLM CI image family from one shared core toolchain. Every backend is available as a GitHub-hosted job container (`public`) and an image containing the GitHub Actions runner (`self-hosted`):
 
 - `public-cpu-*` / `self-hosted-cpu-*`
 - `public-vulkan-*` / `self-hosted-vulkan-*`
@@ -9,7 +9,7 @@ This repository builds a backend-specialized MeshLLM CI image family from one sh
 - `public-rocm70-*` / `self-hosted-rocm70-*`
 - `public-rocm72-*` / `self-hosted-rocm72-*`
 
-CPU, Vulkan, and CUDA tags support `linux/amd64` and `linux/arm64`. ROCm tags are intentionally `linux/amd64` only because that is the currently supported MeshLLM ROCm CI target. The compatibility aliases preserve the deployed contract: `public-*` is CPU on both architectures, while `self-hosted-*` combines CUDA 12 on AMD64 with CPU on ARM64. The existing GHCR package name is retained to avoid a registry and credential migration.
+CPU, Vulkan, and CUDA tags support `linux/amd64` and `linux/arm64`. ROCm tags are intentionally `linux/amd64` only because that is the currently supported MeshLLM ROCm CI target. The compatibility aliases preserve the existing image contract: `public-*` is CPU on both architectures, while `self-hosted-*` combines CUDA 12 on AMD64 with CPU on ARM64. The existing GHCR package name is retained to avoid a registry and credential migration.
 
 ## Design
 
@@ -39,7 +39,7 @@ docker buildx build \
 docker run --rm --entrypoint verify-runner-image mesh-llm-runner:public public cpu
 ```
 
-Use target `self-hosted` and `RUNNER_ENVIRONMENT=self-hosted` for an ARC image. Select `BACKEND=cpu|vulkan|cuda|rocm`; CUDA additionally accepts `CUDA_SERIES`, while ROCm accepts `ROCM_VERSION` and currently requires AMD64.
+Use target `self-hosted` and `RUNNER_ENVIRONMENT=self-hosted` for an image that includes the GitHub Actions runner. Select `BACKEND=cpu|vulkan|cuda|rocm`; CUDA additionally accepts `CUDA_SERIES`, while ROCm accepts `ROCM_VERSION` and currently requires AMD64.
 
 ## Maintenance pipeline
 
@@ -61,7 +61,6 @@ Production consumers resolve one of these tags and pin its immutable manifest di
 ## Consumers
 
 - `examples/workflows/public-github-hosted.yml` runs on `ubuntu-24.04` with the public image through job-level `container:`.
-- `examples/workflows/k3s-self-hosted.yml` targets the `mesh-llm-amd64` and `mesh-llm-arm64` ARC scale sets. It does not add another job container: the ephemeral ARC pod is already the self-hosted image.
-- `scripts/verify-end-to-end.sh` verifies the registry manifest lists and executes both architectures. Add `--cluster` to reconcile Flux and inspect ARC resources.
+- `scripts/verify-end-to-end.sh` verifies the registry manifest lists and executes every supported architecture.
 
-See `docs/AUDIT.md` for the source audit and `docs/OPERATIONS.md` for rollout and acceptance steps.
+See `docs/AUDIT.md` for the source audit and `docs/OPERATIONS.md` for publication and registry-verification steps.
