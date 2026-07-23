@@ -117,12 +117,13 @@ ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
 USER root
 COPY profiles/backends/${BACKEND}.yml /tmp/profiles/backend.yml
-RUN mapfile -t packages < <(profile-packages /tmp/profiles/backend.yml) \
+RUN profile-packages /tmp/profiles/backend.yml > /tmp/profiles/backend-packages.txt \
+    && mapfile -t packages < /tmp/profiles/backend-packages.txt \
     && if (( ${#packages[@]} > 0 )); then \
          apt-get update; \
          apt-get install -y --no-install-recommends "${packages[@]}"; \
        fi \
-    && rm -f /tmp/profiles/backend.yml \
+    && rm -f /tmp/profiles/backend.yml /tmp/profiles/backend-packages.txt \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && printf '%s\n' "${BACKEND}" > /etc/mesh-runner-backend \
