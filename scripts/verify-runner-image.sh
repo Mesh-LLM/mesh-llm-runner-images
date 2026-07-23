@@ -25,10 +25,16 @@ done
 test -f /opt/mesh-llm/manifests/manifest-index.json
 test -s /opt/mesh-llm/manifests/source-revision.txt
 
-if [[ "$actual_environment" == "self-hosted" ]]; then
-  test -x /home/runner/run.sh
-  file /home/runner/bin/Runner.Listener | grep -q "$(case "$(uname -m)" in x86_64) echo 'x86-64' ;; aarch64) echo 'ARM aarch64' ;; *) exit 1 ;; esac)"
-fi
+case "$actual_environment" in
+  public)
+    test "$(id -u)" = 0
+    ;;
+  self-hosted)
+    test "$(id -un)" = runner
+    test -x /home/runner/run.sh
+    file /home/runner/bin/Runner.Listener | grep -q "$(case "$(uname -m)" in x86_64) echo 'x86-64' ;; aarch64) echo 'ARM aarch64' ;; *) exit 1 ;; esac)"
+    ;;
+esac
 
 case "$actual_backend" in
   cpu) ;;

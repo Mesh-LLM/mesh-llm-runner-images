@@ -133,6 +133,7 @@ ENV MESH_RUNNER_BACKEND=${BACKEND}
 USER runner
 
 FROM selected-backend AS public
+USER root
 ENV MESH_RUNNER_ENVIRONMENT=public
 ENTRYPOINT []
 CMD ["/bin/bash"]
