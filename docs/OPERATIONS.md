@@ -10,8 +10,9 @@
 
 ## Registry and local verification
 
+From the repository root:
+
 ```bash
-cd /Users/ndizazzo/dev/mesh/mesh-llm-runner-images
 ./scripts/verify-end-to-end.sh
 ./scripts/verify-end-to-end.sh --all-backends
 ```
