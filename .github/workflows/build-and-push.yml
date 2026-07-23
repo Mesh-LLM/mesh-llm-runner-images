@@ -28,6 +28,10 @@ permissions:
 env:
   IMAGE: ghcr.io/mesh-llm/mesh-llm-cuda-runner
   MESH_REF: ${{ inputs.mesh_ref || 'main' }}
+  CUDA_12_SERIES: 12-9
+  CUDA_13_SERIES: 13-1
+  ROCM_70_VERSION: '7.0'
+  ROCM_72_VERSION: 7.2.3
 
 jobs:
   prepare:
@@ -82,7 +86,13 @@ jobs:
       fail-fast: false
       matrix:
         environment: [public, self-hosted]
+        backend: [cpu, vulkan, cuda12, cuda13, rocm70, rocm72]
         platform: [linux/amd64, linux/arm64]
+        exclude:
+          - backend: rocm70
+            platform: linux/arm64
+          - backend: rocm72
+            platform: linux/arm64
         include:
           - platform: linux/amd64
             platform_id: amd64
@@ -103,6 +113,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Resolve backend build arguments
+        id: backend
+        shell: bash
+        run: scripts/resolve-backend.sh "${{ matrix.backend }}" >> "$GITHUB_OUTPUT"
+
       - name: Build and verify test image
         uses: docker/build-push-action@v7
         with:
@@ -111,10 +126,13 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: false
           build-args: |
+            BACKEND=${{ steps.backend.outputs.name }}
             RUNNER_ENVIRONMENT=${{ matrix.environment }}
             MESH_LLM_REVISION=${{ needs.prepare.outputs.mesh_revision }}
-          cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
+            CUDA_SERIES=${{ steps.backend.outputs.cuda_series || 'none' }}
+            ROCM_VERSION=${{ steps.backend.outputs.rocm_version || 'none' }}
+          cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.backend }}-${{ matrix.platform_id }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.backend }}-${{ matrix.platform_id }}
 
   publish-platform:
     needs: [prepare, build-test]
@@ -129,7 +147,13 @@ jobs:
       fail-fast: false
       matrix:
         environment: [public, self-hosted]
+        backend: [cpu, vulkan, cuda12, cuda13, rocm70, rocm72]
         platform: [linux/amd64, linux/arm64]
+        exclude:
+          - backend: rocm70
+            platform: linux/arm64
+          - backend: rocm72
+            platform: linux/arm64
         include:
           - platform: linux/amd64
             platform_id: amd64
@@ -157,6 +181,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve backend build arguments
+        id: backend
+        shell: bash
+        run: scripts/resolve-backend.sh "${{ matrix.backend }}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push architecture image by digest
         id: build
         uses: docker/build-push-action@v7
@@ -167,12 +196,16 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             io.mesh-llm.runner.environment=${{ matrix.environment }}
+            io.mesh-llm.runner.backend=${{ matrix.backend }}
             io.mesh-llm.source.revision=${{ needs.prepare.outputs.mesh_revision }}
           build-args: |
+            BACKEND=${{ steps.backend.outputs.name }}
             RUNNER_ENVIRONMENT=${{ matrix.environment }}
             MESH_LLM_REVISION=${{ needs.prepare.outputs.mesh_revision }}
-          cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.platform_id }}
+            CUDA_SERIES=${{ steps.backend.outputs.cuda_series || 'none' }}
+            ROCM_VERSION=${{ steps.backend.outputs.rocm_version || 'none' }}
+          cache-from: type=gha,scope=${{ matrix.environment }}-${{ matrix.backend }}-${{ matrix.platform_id }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.environment }}-${{ matrix.backend }}-${{ matrix.platform_id }}
           provenance: mode=max
           sbom: true
 
@@ -187,7 +220,7 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v7
         with:
-          name: digests-${{ matrix.environment }}-${{ matrix.platform_id }}
+          name: digests-${{ matrix.environment }}-${{ matrix.backend }}-${{ matrix.platform_id }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -205,11 +238,12 @@ jobs:
       fail-fast: false
       matrix:
         environment: [public, self-hosted]
+        backend: [cpu, vulkan, cuda12, cuda13, rocm70, rocm72]
     steps:
       - name: Download architecture digests
         uses: actions/download-artifact@v8
         with:
-          pattern: digests-${{ matrix.environment }}-*
+          pattern: digests-${{ matrix.environment }}-${{ matrix.backend }}-*
           path: /tmp/digests
           merge-multiple: true
 
@@ -229,9 +263,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=${{ matrix.environment }}-latest
-            type=raw,value=${{ matrix.environment }}-${{ needs.prepare.outputs.timestamp }}
-            type=raw,value=${{ matrix.environment }}-sha-${{ needs.prepare.outputs.mesh_revision_short }}
+            type=raw,value=${{ matrix.environment }}-${{ matrix.backend }}-latest
+            type=raw,value=${{ matrix.environment }}-${{ matrix.backend }}-${{ needs.prepare.outputs.timestamp }}
+            type=raw,value=${{ matrix.environment }}-${{ matrix.backend }}-sha-${{ needs.prepare.outputs.mesh_revision_short }}
 
       - name: Create multi-architecture manifest
         id: manifest
@@ -249,7 +283,11 @@ jobs:
           for digest_file in /tmp/digests/*; do
             sources+=("${IMAGE}@sha256:$(basename "$digest_file")")
           done
-          test "${#sources[@]}" -eq 2
+          expected_sources=2
+          case "${{ matrix.backend }}" in
+            rocm*) expected_sources=1 ;;
+          esac
+          test "${#sources[@]}" -eq "$expected_sources"
 
           docker buildx imagetools create "${tag_arguments[@]}" "${sources[@]}"
           manifest_json="$(docker buildx imagetools inspect "${tags[0]}" --format '{{json .Manifest}}')"
@@ -258,7 +296,11 @@ jobs:
           [[ "$digest" == sha256:* ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-          for architecture in amd64 arm64; do
+          architectures=(amd64 arm64)
+          case "${{ matrix.backend }}" in
+            rocm*) architectures=(amd64) ;;
+          esac
+          for architecture in "${architectures[@]}"; do
             jq -e --arg architecture "$architecture" \
               '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture)' \
               <<< "$raw_manifest" >/dev/null
@@ -275,9 +317,93 @@ jobs:
       - name: Publish summary
         run: |
           {
-            echo "## ${{ matrix.environment }} image"
+            echo "## ${{ matrix.environment }} ${{ matrix.backend }} image"
             echo
             echo "- digest: \`${{ steps.manifest.outputs.digest }}\`"
             echo "- MeshLLM revision: \`${{ needs.prepare.outputs.mesh_revision }}\`"
+            echo "- architectures: ${{ startsWith(matrix.backend, 'rocm') && '`linux/amd64`' || '`linux/amd64`, `linux/arm64`' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-compatibility:
+    needs: [prepare, publish-platform]
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [public, self-hosted]
+    steps:
+      - name: Download architecture digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: digests-${{ matrix.environment }}-*
+          path: /tmp/digests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create compatibility manifest
+        id: manifest
+        shell: bash
+        run: |
+          tag_arguments=(
+            --tag "${IMAGE}:${{ matrix.environment }}-latest"
+            --tag "${IMAGE}:${{ matrix.environment }}-${{ needs.prepare.outputs.timestamp }}"
+            --tag "${IMAGE}:${{ matrix.environment }}-sha-${{ needs.prepare.outputs.mesh_revision_short }}"
+          )
+
+          sources=()
+          if [[ "${{ matrix.environment }}" == public ]]; then
+            digest_paths=(/tmp/digests/digests-public-cpu-*/*)
+          else
+            digest_paths=(
+              /tmp/digests/digests-self-hosted-cuda12-amd64/*
+              /tmp/digests/digests-self-hosted-cpu-arm64/*
+            )
+          fi
+          for digest_file in "${digest_paths[@]}"; do
+            sources+=("${IMAGE}@sha256:$(basename "$digest_file")")
+          done
+          test "${#sources[@]}" -eq 2
+
+          docker buildx imagetools create "${tag_arguments[@]}" "${sources[@]}"
+          manifest_json="$(docker buildx imagetools inspect "${IMAGE}:${{ matrix.environment }}-latest" --format '{{json .Manifest}}')"
+          raw_manifest="$(docker buildx imagetools inspect "${IMAGE}:${{ matrix.environment }}-latest" --raw)"
+          digest="$(jq -r '.digest' <<< "$manifest_json")"
+          [[ "$digest" == sha256:* ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+          for architecture in amd64 arm64; do
+            jq -e --arg architecture "$architecture" \
+              '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture)' \
+              <<< "$raw_manifest" >/dev/null
+          done
+
+      - name: Attest pushed compatibility manifest
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Publish summary
+        run: |
+          {
+            echo "## ${{ matrix.environment }} compatibility image"
+            echo
+            echo "- digest: \`${{ steps.manifest.outputs.digest }}\`"
             echo "- architectures: \`linux/amd64\`, \`linux/arm64\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -11,8 +11,10 @@ jobs:
         include:
           - runner_scale_set: mesh-llm-amd64
             expected_arch: x86_64
+            expected_backend: cuda
           - runner_scale_set: mesh-llm-arm64
             expected_arch: aarch64
+            expected_backend: cpu
     runs-on: ${{ matrix.runner_scale_set }}
     permissions:
       contents: read
@@ -20,6 +22,6 @@ jobs:
       - uses: actions/checkout@v7
       - name: Prove environment and build
         run: |
-          verify-runner-image self-hosted
+          verify-runner-image self-hosted "${{ matrix.expected_backend }}"
           test "$(uname -m)" = "${{ matrix.expected_arch }}"
           cargo check -p mesh-llm-config

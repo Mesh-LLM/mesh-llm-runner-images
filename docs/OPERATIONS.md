@@ -3,7 +3,7 @@
 ## Rollout order
 
 1. Merge and run `Build and Push Runner Images` in `Mesh-LLM/mesh-llm-runner-images`.
-2. Confirm both `public-latest` and `self-hosted-latest` have AMD64 and ARM64 manifests.
+2. Confirm CPU, Vulkan, and CUDA tags have AMD64 and ARM64 children and ROCm tags have an AMD64 child.
 3. Merge the ARC/Flux changes in the `crusader-patio51` GitOps repository.
 4. Reconcile `cluster-apps` and wait for the ARC controller and both scale-set Helm releases.
 5. Copy the example workflows into `.github/workflows/` of a test branch and dispatch them.
@@ -15,10 +15,11 @@ The initial GitOps change keeps the existing static runners online while ARC is 
 
 | Path | Host | Execution image | Required proof |
 | --- | --- | --- | --- |
-| Public AMD64 | `ubuntu-24.04` | `public-latest` job container | image verifier and Cargo check pass |
-| ARC AMD64/NVIDIA | Carrack K3s node | `self-hosted-*` AMD64 | `x86_64`, `nvcc`, Cargo check, correct image tag |
-| ARC ARM64 | CM4/CM5 K3s nodes | same `self-hosted-*` manifest list, ARM64 child | `aarch64`, Cargo check, correct image tag |
-| Registry | GHCR | both variants | OCI index includes `linux/amd64` and `linux/arm64` |
+| Public CPU/Vulkan | `ubuntu-24.04` | matching `public-<backend>@sha256:*` job container | image verifier and Cargo check pass |
+| Public CUDA/ROCm | GitHub-hosted Linux | matching versioned public backend digest | compiler-only backend build passes |
+| ARC AMD64/NVIDIA | Carrack K3s node | `self-hosted-cuda12@sha256:*` AMD64 | `x86_64`, `nvcc`, Cargo check, GPU device visible where requested |
+| ARC ARM64 | CM4/CM5 K3s nodes | `self-hosted-cpu@sha256:*` or Vulkan/CUDA ARM64 child | `aarch64`, Cargo check, correct digest |
+| Registry | GHCR | all variants | expected OCI architecture children are present |
 | GitOps | Flux | ARC controller and scale sets | HelmReleases Ready and image policy current |
 
 ## Registry and local execution
@@ -26,6 +27,7 @@ The initial GitOps change keeps the existing static runners online while ARC is 
 ```bash
 cd /Users/ndizazzo/dev/mesh/mesh-llm-runner-images
 ./scripts/verify-end-to-end.sh
+./scripts/verify-end-to-end.sh --all-backends
 ```
 
 This inspects both OCI indexes and executes `verify-runner-image` under both platform emulations. If GHCR is private, authenticate first with `gh auth token | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin`.
@@ -33,7 +35,7 @@ This inspects both OCI indexes and executes `verify-runner-image` under both pla
 ## Flux and ARC
 
 ```bash
-cd /Users/ndizazzo/dev/personal/stanton-patio51
+cd /Users/ndizazzo/dev/ndizazzo/stanton-patio51
 kubectl kustomize deployments/ >/tmp/stanton-rendered.yaml
 flux reconcile kustomization cluster-apps --with-source
 flux get helmreleases --all-namespaces
@@ -49,7 +51,7 @@ cd /Users/ndizazzo/dev/mesh/mesh-llm-runner-images
 ./scripts/verify-end-to-end.sh --cluster
 ```
 
-Flux image automation selects the newest `self-hosted-YYYYMMDDHHMMSS` tag and commits it into the two scale-set HelmReleases. The `patio51-repo-auth` deploy key must therefore have push permission. If it is read-only, keep the ImagePolicy but suspend the ImageUpdateAutomation and update the tag through a normal pull request.
+Flux may use timestamp tags for discovery, but the applied HelmRelease must pin the resolved manifest digest. Backend-specific ARC pools must also carry matching hardware labels, node selectors, tolerations, and GPU resource requests. The `patio51-repo-auth` deploy key must have push permission for image automation; otherwise update the digest through a normal pull request.
 
 ## Scheduling proof
 
@@ -66,4 +68,4 @@ The AMD64 pod must land on the `system=carrack` node and request `nvidia.com/gpu
 
 ## Rollback
 
-Point the HelmRelease image fields at the previous immutable `self-hosted-<timestamp>` tag, reconcile Flux, and cancel queued jobs targeting the new scale sets. Existing ARC runner pods are ephemeral; no work directory or runner registration needs manual cleanup.
+Point the HelmRelease image fields at the previous immutable digest, reconcile Flux, and cancel queued jobs targeting the new scale sets. Existing ARC runner pods are ephemeral; no work directory or runner registration needs manual cleanup.

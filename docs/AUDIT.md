@@ -33,18 +33,17 @@ The workflows repeatedly install these groups:
 - System libraries: OpenSSL, D-Bus, curl, and standard packaging utilities.
 - Vulkan compilation: `glslc`, `libvulkan-dev`, and `spirv-headers`.
 - CI/diagnostics: Python 3 with venv/pip, curl, git/LFS, jq, lsof, patchelf, rsync, and shellcheck.
-- GPU specializations: CUDA for the NVIDIA/x64 runner. ROCm remains a workload-specific container concern because the current K3s self-hosted x64 node is NVIDIA, not AMD.
+- GPU specializations: versioned CUDA and ROCm compiler/library overlays, plus a Vulkan SDK overlay. Runtime GPU access still depends on the selected ARC pool and node hardware.
 
 ## Environment policy
 
-The public and self-hosted variants intentionally receive the same project manifest inventory and common toolchain. Only operational packages and hardware SDKs differ:
+The public and self-hosted variants intentionally receive the same project manifest inventory and common toolchain. Backend SDKs are selected independently from the execution environment:
 
-| Capability | Public | Self-hosted ARM64 | Self-hosted AMD64 |
+| Image backend | AMD64 | ARM64 | Compile-time contract |
 | --- | --- | --- | --- |
-| Core Linux/Rust/Node/Python/Vulkan tools | yes | yes | yes |
-| Project manifest/dependency cache | yes | yes | yes |
-| GitHub runner binary | no | yes | yes |
-| Cluster diagnostics | no | yes | yes |
-| CUDA build toolkit | no | no | yes |
+| CPU | yes | yes | common compiler and project tools |
+| Vulkan | yes | yes | `glslc`, Vulkan headers/loader, SPIR-V headers |
+| CUDA 12/13 | yes | yes | `nvcc`, CUDA runtime headers, cuBLAS headers/libraries |
+| ROCm 7.0/7.2 | yes | no | HIP compiler, HIP/rocBLAS headers and libraries |
 
-This avoids claiming false parity between CPU ARM nodes and an NVIDIA node while keeping their base compiler and package environment identical.
+Every backend has a `public` job-container target and a `self-hosted` ARC target. The latter adds only the Actions runner and cluster diagnostics. GPU execution tests remain restricted to appropriately labelled nodes; building a GPU image does not imply that its host exposes that GPU.

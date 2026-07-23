@@ -1,0 +1,5 @@
+---
+schema: 1
+profile: cpu
+apt:
+  packages: []

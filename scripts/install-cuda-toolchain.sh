@@ -5,13 +5,19 @@ set -euo pipefail
 : "${INSTALL_CUDA:=1}"
 : "${CUDA_SERIES:=12-9}"
 
-if [[ "$INSTALL_CUDA" != "1" || "$TARGETARCH" != "amd64" ]]; then
+if [[ "$INSTALL_CUDA" != "1" ]]; then
   echo "Skipping CUDA toolkit for TARGETARCH=${TARGETARCH} INSTALL_CUDA=${INSTALL_CUDA}"
   exit 0
 fi
 
+case "$TARGETARCH" in
+  amd64) repository_arch=x86_64 ;;
+  arm64) repository_arch=sbsa ;;
+  *) echo "unsupported CUDA architecture: $TARGETARCH" >&2; exit 1 ;;
+esac
+
 curl -fsSL -o /tmp/cuda-keyring.deb \
-  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+  "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${repository_arch}/cuda-keyring_1.1-1_all.deb"
 dpkg -i /tmp/cuda-keyring.deb
 rm -f /tmp/cuda-keyring.deb
 
@@ -33,4 +39,4 @@ fi
 
 /usr/local/cuda/bin/nvcc --version
 test -f /usr/local/cuda/include/cublas_v2.h
-find /usr/local/cuda/targets/x86_64-linux/lib -name 'libcublas.so*' -print -quit | grep -q .
+find /usr/local/cuda/targets -path '*/lib/libcublas.so*' -print -quit | grep -q .
