@@ -35,7 +35,7 @@ This inspects both OCI indexes and executes `verify-runner-image` under both pla
 ## Flux and ARC
 
 ```bash
-cd /Users/ndizazzo/dev/ndizazzo/stanton-patio51
+cd /Users/ndizazzo/dev/personal/stanton-patio51
 kubectl kustomize deployments/ >/tmp/stanton-rendered.yaml
 flux reconcile kustomization cluster-apps --with-source
 flux get helmreleases --all-namespaces
