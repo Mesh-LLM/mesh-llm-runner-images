@@ -18,7 +18,7 @@ if [[ -n "$expected_backend" && "$actual_backend" != "$expected_backend" ]]; the
   exit 1
 fi
 
-for command_name in cargo cmake git jq just lld node ninja npm pnpm python rustc sccache; do
+for command_name in cargo cmake docker git jq just lld node ninja npm pnpm python rustc sccache; do
   command -v "$command_name" >/dev/null || { echo "missing command: $command_name" >&2; exit 1; }
 done
 

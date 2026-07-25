@@ -60,6 +60,15 @@ RUN chmod 0755 /usr/local/bin/install-core-tools \
     && TARGETARCH="${TARGETARCH}" NODE_MAJOR="${NODE_MAJOR}" JUST_VERSION="${JUST_VERSION}" SCCACHE_VERSION="${SCCACHE_VERSION}" \
        /usr/local/bin/install-core-tools
 
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && printf 'deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu noble stable\n' \
+        > /etc/apt/sources.list.d/docker-ce.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY build-context/manifests/${RUNNER_ENVIRONMENT}/ /opt/mesh-llm/manifests/
 COPY scripts/warm-dependencies.sh /usr/local/bin/warm-dependencies
 RUN chmod 0755 /usr/local/bin/warm-dependencies \
