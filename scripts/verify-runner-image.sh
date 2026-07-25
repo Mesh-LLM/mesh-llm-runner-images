@@ -22,6 +22,21 @@ for command_name in cargo cmake docker git jq just lld node ninja npm pnpm pytho
   command -v "$command_name" >/dev/null || { echo "missing command: $command_name" >&2; exit 1; }
 done
 
+# GHA convention paths and the actions/runner-bundled node externals.
+# Required by the public AND self-hosted targets so workflow `container:`
+# images resolve /__e/node24/bin/node when exec'd by an outer Docker daemon
+# (DinD path) without kubelet bind-mounting /__e. This assertion is the
+# regression guard for the bug this image refactor exists to fix.
+test -x /__e/node24/bin/node \
+  || { echo "/__e/node24/bin/node missing or not executable" >&2; exit 1; }
+test -x /home/runner/externals/node24/bin/node \
+  || { echo "/home/runner/externals/node24/bin/node canonical source missing or not executable" >&2; exit 1; }
+# `command -v docker` (loop above) only checks the binary exists on PATH;
+# additionally assert the CLI actually runs, catching exec-format / missing
+# shared-library / permission failures that `command -v` misses.
+docker --version >/dev/null \
+  || { echo "docker CLI not callable via 'docker --version'" >&2; exit 1; }
+
 test -f /opt/mesh-llm/manifests/manifest-index.json
 test -s /opt/mesh-llm/manifests/source-revision.txt
 

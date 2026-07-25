@@ -22,6 +22,18 @@ The image has four layers of configuration:
 
 The YAML profiles use a deliberately small schema (`schema`, `profile`, and `apt.packages`) that is parsed by portable Bash without Python or Ruby. The manifest bundle is content-addressed in `manifest-index.json`. Cargo target stubs retain the complete workspace graph without copying or publishing MeshLLM source code in the runner image.
 
+### Base image
+
+The toolchain stage builds `FROM ghcr.io/actions/actions-runner:latest` (pinned by digest in the Dockerfile), which provides the GitHub Actions runner agent, the `runner` user (uid 1001), the `docker` group (gid 123), `/usr/bin/docker` (Docker CLI, no daemon), and Node 20 + 24 runtimes under `/home/runner/externals/node{20,24}/bin`. `scripts/install-core-tools.sh` wires Node from these externals into `/usr/local/bin` instead of installing Node from an apt repository; `docker-ce-cli` is no longer apt-installed because the base already ships a compatible Docker client.
+
+Both final stages provision the GitHub Actions root-system conventions required when the image is used as a job `container:` (DinD sidecar, rootless Podman, or any setup where the runner cannot rely on kubelet bind mounts):
+
+- `/__e/node24` → symlinked to `/home/runner/externals/node24`
+- `/__e/node20` → symlinked to `/home/runner/externals/node20`
+- `/__w`, `/github/home`, `/github/workflow` → directories with mode 0777
+
+The `public` stage bakes these as `USER root` (matching the public-container root convention); the `self-hosted` stage bakes them before restoring `USER runner` so the runner agent's `run.sh` entrypoint still executes with uid 1001. `scripts/verify-runner-image.sh` asserts both the `/__e/node24/bin/node` symlink and its canonical source under `/home/runner/externals/`, plus `docker --version`, so regressions of the `/__e/node24/bin/node: no such file or directory` failure mode are caught at build time.
+
 ## Local build
 
 ```bash

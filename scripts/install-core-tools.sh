@@ -12,24 +12,32 @@ case "$TARGETARCH" in
   *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;;
 esac
 
-install_node() {
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
-  printf 'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
-    > /etc/apt/sources.list.d/nodesource.list
-  apt-get update
-  apt-get install -y --no-install-recommends nodejs
+# The base image (ghcr.io/actions/actions-runner) ships node externals at
+# /home/runner/externals/node<N>/bin/{node,npm,npx,corepack}. Per the
+# Dockerfile's MUST-NOT contract, we do NOT `apt install nodejs` here;
+# instead we symlink the NODE_MAJOR version into /usr/local/bin so the
+# standard PATH works for both this script (pnpm via npm) and the
+# verify-runner-image.sh `command -v node` assertion.
+wire_node_from_base() {
+  local externals_root="/home/runner/externals/node${NODE_MAJOR}/bin"
+  test -x "${externals_root}/node" \
+    || { echo "base image missing node${NODE_MAJOR} externals at ${externals_root}" >&2; exit 1; }
+  for binary in node npm npx corepack; do
+    ln -sf "${externals_root}/${binary}" "/usr/local/bin/${binary}"
+  done
   npm install --global "pnpm@10"
-  apt-get clean
-  rm -rf /var/lib/apt/lists/*
 }
 
 install_rust() {
-  sudo -u runner env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
+  # runuser (util-linux) switches user without consulting sudoers; the
+  # actions/runner base image's /etc/sudoers omits the standard
+  # `root ALL=(...)` entry and the @includedir /etc/sudoers.d directive,
+  # so `sudo -u runner` from a root RUN context would fail.
+  runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
     bash -c 'curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable'
-  sudo -u runner env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
+  runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
     /home/runner/.cargo/bin/rustup component add clippy rustfmt
-  sudo -u runner env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
+  runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
     /home/runner/.cargo/bin/rustup target add aarch64-linux-android
 }
 
@@ -56,7 +64,7 @@ install_sccache() {
 }
 
 cd /tmp
-install_node
+wire_node_from_base
 install_rust
 install_just
 install_sccache
