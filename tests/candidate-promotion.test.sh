@@ -80,9 +80,9 @@ DOCKER_BIN="$mock_docker" \
     --immutable-tag \
       "$image:public-cuda12-mesh-$mesh_revision-runner-$runner_images_revision"
 
-rg -q '^buildx imagetools inspect .*@sha256' "$promotion_log"
-rg -q '^buildx imagetools create ' "$promotion_log"
-if rg -q '^buildx build ' "$promotion_log"; then
+grep -q '^buildx imagetools inspect .*@sha256' "$promotion_log"
+grep -q '^buildx imagetools create ' "$promotion_log"
+if grep -q '^buildx build ' "$promotion_log"; then
   echo "promotion helper invoked an image build" >&2
   exit 1
 fi
@@ -97,7 +97,7 @@ DOCKER_BIN="$mock_docker" \
     --tag "$image:public-cuda12-sha-222222222222" \
     --immutable-tag \
       "$image:public-cuda12-mesh-$mesh_revision-runner-$runner_images_revision"
-rg -q '^buildx imagetools create ' "$new_immutable_log"
+grep -q '^buildx imagetools create ' "$new_immutable_log"
 
 immutable_conflict_log="$temporary_directory/immutable-conflict.log"
 expect_failure env \
@@ -110,7 +110,7 @@ expect_failure env \
     --tag "$image:public-cuda12-sha-222222222222" \
     --immutable-tag \
       "$image:public-cuda12-mesh-$mesh_revision-runner-$runner_images_revision"
-if rg -q '^buildx imagetools create ' "$immutable_conflict_log"; then
+if grep -q '^buildx imagetools create ' "$immutable_conflict_log"; then
   echo "promotion continued after immutable composite tag conflict" >&2
   exit 1
 fi
@@ -131,7 +131,7 @@ expect_failure env \
   DOCKER_BIN="$mock_docker" \
   bash "$promoter" "${validation_arguments[@]}" \
     --tag "$image:public-cuda12-latest"
-if rg -q '^buildx imagetools create ' "$source_mismatch_log"; then
+if grep -q '^buildx imagetools create ' "$source_mismatch_log"; then
   echo "promotion continued after candidate source digest mismatch" >&2
   exit 1
 fi
@@ -156,7 +156,7 @@ expect_failure env \
   DOCKER_BIN="$mock_docker" \
   bash "$promoter" "${validation_arguments[@]}" \
     --tag "$image:public-cuda12-latest"
-if rg -q '^buildx imagetools create ' "$children_mismatch_log"; then
+if grep -q '^buildx imagetools create ' "$children_mismatch_log"; then
   echo "promotion continued after registry child digest mismatch" >&2
   exit 1
 fi
@@ -176,7 +176,7 @@ expect_failure env \
   DOCKER_BIN="$mock_docker" \
   bash "$promoter" "${validation_arguments[@]}" \
     --tag "$image:public-cuda12-latest"
-if rg -q '^buildx imagetools create ' "$unexpected_platform_log"; then
+if grep -q '^buildx imagetools create ' "$unexpected_platform_log"; then
   echo "promotion continued with an unexpected runnable platform" >&2
   exit 1
 fi

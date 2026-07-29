@@ -166,11 +166,11 @@ jq '.indexes[0].tag_stem = "public"' \
 expect_failure bash "$matrix_generator" "$duplicate_tag_descriptor" github
 
 workflow="$repository_root/.github/workflows/build-and-push.yml"
-[[ "$(rg -c 'vars\.DEPOT_RUNNERS_ENABLED' "$workflow")" -eq 1 ]]
-[[ "$(rg -F -c 'runs-on: ubuntu-24.04' "$workflow")" -eq 1 ]]
-rg -Fq 'runs-on: ${{ needs.policy.outputs.orchestration_runner }}' "$workflow"
-rg -Fq 'RUNNER_PROVIDER: ${{ needs.policy.outputs.runner_provider }}' "$workflow"
-if rg -q 'runs-on: depot-ubuntu' "$workflow"; then
+[[ "$(grep -c 'vars\.DEPOT_RUNNERS_ENABLED' "$workflow")" -eq 1 ]]
+[[ "$(grep -F -c 'runs-on: ubuntu-24.04' "$workflow")" -eq 1 ]]
+grep -Fq "runs-on: \${{ needs.policy.outputs.orchestration_runner }}" "$workflow"
+grep -Fq "RUNNER_PROVIDER: \${{ needs.policy.outputs.runner_provider }}" "$workflow"
+if grep -q 'runs-on: depot-ubuntu' "$workflow"; then
   echo "workflow bypasses the centralized runner rollout selector" >&2
   exit 1
 fi
