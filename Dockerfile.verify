@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.7
+
+ARG CANDIDATE_IMAGE
+FROM ${CANDIDATE_IMAGE}
+
+ARG CANDIDATE_IMAGE
+ARG EXPECTED_ENVIRONMENT
+ARG EXPECTED_BACKEND
+ARG EXPECTED_MESH_REVISION
+ARG EXPECTED_CUDA_SERIES=none
+ARG EXPECTED_ROCM_VERSION=none
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN [[ "${CANDIDATE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]] \
+    && test -n "${EXPECTED_ENVIRONMENT}" \
+    && test -n "${EXPECTED_BACKEND}" \
+    && test -n "${EXPECTED_MESH_REVISION}" \
+    && /usr/local/bin/verify-runner-image \
+       "${EXPECTED_ENVIRONMENT}" \
+       "${EXPECTED_BACKEND}" \
+       "${EXPECTED_MESH_REVISION}" \
+       "${EXPECTED_CUDA_SERIES}" \
+       "${EXPECTED_ROCM_VERSION}"

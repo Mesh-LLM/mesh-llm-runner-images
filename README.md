@@ -57,16 +57,29 @@ Use target `self-hosted` and `RUNNER_ENVIRONMENT=self-hosted` for an image that 
 
 `.github/workflows/build-and-push.yml` runs on pull requests, pushes to `main`, a weekly schedule, and manual dispatch. It:
 
-1. checks out the requested MeshLLM ref;
-2. generates and uploads both manifest bundles;
-3. builds and executes every supported environment, backend, and architecture combination;
-4. publishes multi-platform tags, SBOMs, provenance, and GitHub attestations to GHCR.
+1. validates the workflow and immutable-candidate contract before expensive work;
+2. checks out the requested MeshLLM ref and generates both manifest bundles;
+3. builds every supported environment, backend, and native architecture exactly once;
+4. verifies each trusted staged image through its exact registry digest, then assembles and validates one immutable index descriptor per family;
+5. promotes timestamp, MeshLLM compatibility, and composite source-revision tags from those digests without rebuilding;
+6. moves `latest` aliases only after every versioned promotion and attestation succeeds.
+
+Pull requests and `workflow_dispatch` runs with publication disabled build each `*-test` target once and receive no package-write permission. Trusted publishing runs push only content-addressed candidates until the cohort-wide promotion gates pass. Run-specific `candidate-*` tags are staging handles; consumers and promotion jobs use the resolved `sha256:` digest.
+
+Supported environments, backends, architectures, compatibility aliases, and extra indexes are declared in `config/runner-image-families.json`; `scripts/generate-workflow-matrices.sh` validates that descriptor and generates both build and promotion matrices.
+
+Pull requests always use native GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` runners. The policy job is also fixed to GitHub-hosted Ubuntu and selects the downstream provider. Trusted `main` events use Depot only when the repository or organization Actions variable `DEPOT_RUNNERS_ENABLED` is exactly `true`; otherwise they fall back to GitHub-hosted runners. Feature-branch dispatches never acquire Depot access. When enabled, compile-heavy platform jobs use Depot's 16-vCPU x86 or Arm class and orchestration uses its 4-vCPU class.
+
+The weekly default-branch publication is intentionally Depot-eligible when that gate is enabled: it is a trusted, high-value full image rebuild. Scheduled runs on any other ref remain GitHub-hosted.
+
+This gate keeps untrusted pull requests out of Depot Cache, which is repository-scoped but not branch-isolated. GitHub-hosted pull requests use the standard GitHub Actions cache with numbered PR scopes. Trusted Depot runs use only the Depot-backed trusted scope.
 
 Published tags are:
 
 - `<environment>-<backend>-latest`
 - `<environment>-<backend>-YYYYMMDDHHMMSS` for discovery and evaluation
-- `<environment>-<backend>-sha-<MeshLLM revision>` for source traceability
+- `<environment>-<backend>-sha-<12-character MeshLLM revision>` is a mutable compatibility alias and may move when runner-image inputs change
+- `<environment>-<backend>-mesh-<full MeshLLM revision>-runner-<full runner-images revision>` is the immutable composite source identity and refuses conflicting overwrite
 
 Production consumers resolve one of these tags and pin its immutable manifest digest. Tags are not the production contract.
 

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "type": "mesh-llm-runner-image-candidate",
+  "image": "ghcr.io/mesh-llm/mesh-llm-cuda-runner",
+  "environment": "public",
+  "backend": {
+    "id": "cuda12",
+    "name": "cuda",
+    "cuda_series": "12-9",
+    "rocm_version": null
+  },
+  "runner_images_revision": "1111111111111111111111111111111111111111",
+  "mesh_revision": "2222222222222222222222222222222222222222",
+  "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "children": [
+    {
+      "os": "linux",
+      "architecture": "amd64",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "os": "linux",
+      "architecture": "arm64",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "environments": [
+    "public",
+    "self-hosted"
+  ],
+  "backends": [
+    {
+      "id": "cpu",
+      "name": "cpu",
+      "cuda_series": null,
+      "rocm_version": null,
+      "architectures": [
+        "amd64",
+        "arm64"
+      ]
+    },
+    {
+      "id": "vulkan",
+      "name": "vulkan",
+      "cuda_series": null,
+      "rocm_version": null,
+      "architectures": [
+        "amd64",
+        "arm64"
+      ]
+    },
+    {
+      "id": "cuda12",
+      "name": "cuda",
+      "cuda_series": "12-9",
+      "rocm_version": null,
+      "architectures": [
+        "amd64",
+        "arm64"
+      ]
+    },
+    {
+      "id": "cuda13",
+      "name": "cuda",
+      "cuda_series": "13-1",
+      "rocm_version": null,
+      "architectures": [
+        "amd64",
+        "arm64"
+      ]
+    },
+    {
+      "id": "rocm70",
+      "name": "rocm",
+      "cuda_series": null,
+      "rocm_version": "7.0",
+      "architectures": [
+        "amd64"
+      ]
+    },
+    {
+      "id": "rocm72",
+      "name": "rocm",
+      "cuda_series": null,
+      "rocm_version": "7.2.3",
+      "architectures": [
+        "amd64"
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "environment": "public",
+      "backend_id": "cpu",
+      "tag_stem": "public"
+    }
+  ],
+  "indexes": [
+    {
+      "environment": "self-hosted",
+      "backend_id": "compatibility",
+      "backend_name": "mixed",
+      "cuda_series": null,
+      "rocm_version": null,
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "artifact": "candidate-index-self-hosted-compatibility",
+      "tag_stem": "self-hosted"
+    }
+  ]
+}

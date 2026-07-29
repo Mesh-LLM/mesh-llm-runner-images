@@ -3,8 +3,14 @@ set -euo pipefail
 
 expected_environment="${1:-${MESH_RUNNER_ENVIRONMENT:-}}"
 expected_backend="${2:-${MESH_RUNNER_BACKEND:-}}"
+expected_revision="${3:-}"
+expected_cuda_series="${4:-}"
+expected_rocm_version="${5:-}"
 actual_environment="$(cat /etc/mesh-runner-environment)"
 actual_backend="$(cat /etc/mesh-runner-backend)"
+actual_revision="$(cat /etc/mesh-llm-revision)"
+actual_cuda_series="$(cat /etc/mesh-runner-cuda-series)"
+actual_rocm_version="$(cat /etc/mesh-runner-rocm-version)"
 verification_directory="$(mktemp -d)"
 trap 'rm -rf "$verification_directory"' EXIT
 
@@ -16,6 +22,39 @@ fi
 if [[ -n "$expected_backend" && "$actual_backend" != "$expected_backend" ]]; then
   echo "expected backend '$expected_backend', found '$actual_backend'" >&2
   exit 1
+fi
+
+if [[ -n "$expected_revision" ]]; then
+  [[ "$expected_revision" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "expected MeshLLM revision must be a full lowercase git SHA" >&2
+    exit 1
+  }
+  if [[ "$actual_revision" != "$expected_revision" ]]; then
+    echo "expected MeshLLM revision '$expected_revision', found '$actual_revision'" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$expected_cuda_series" ]]; then
+  [[ "$expected_cuda_series" == none || "$expected_cuda_series" =~ ^[0-9]+-[0-9]+$ ]] || {
+    echo "expected CUDA series must be 'none' or MAJOR-MINOR" >&2
+    exit 1
+  }
+  if [[ "$actual_cuda_series" != "$expected_cuda_series" ]]; then
+    echo "expected CUDA series '$expected_cuda_series', found '$actual_cuda_series'" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$expected_rocm_version" ]]; then
+  [[ "$expected_rocm_version" == none || "$expected_rocm_version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] || {
+    echo "expected ROCm version must be 'none' or a dotted numeric version" >&2
+    exit 1
+  }
+  if [[ "$actual_rocm_version" != "$expected_rocm_version" ]]; then
+    echo "expected ROCm version '$expected_rocm_version', found '$actual_rocm_version'" >&2
+    exit 1
+  fi
 fi
 
 for command_name in cargo cmake docker git jq just lld node ninja npm pnpm python rustc sccache; do
@@ -91,9 +130,11 @@ jq -n \
   --arg architecture "$(uname -m)" \
   --arg environment "$actual_environment" \
   --arg backend "$actual_backend" \
-  --arg revision "$(cat /etc/mesh-llm-revision)" \
+  --arg revision "$actual_revision" \
+  --arg cuda_series "$actual_cuda_series" \
+  --arg rocm_version "$actual_rocm_version" \
   --arg cargo "$(cargo --version)" \
   --arg node "$(node --version)" \
   --arg pnpm "$(pnpm --version)" \
   --arg python "$(python --version 2>&1)" \
-  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, tools: {cargo: $cargo, node: $node, pnpm: $pnpm, python: $python}}'
+  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, backend_metadata: {cuda_series: $cuda_series, rocm_version: $rocm_version}, tools: {cargo: $cargo, node: $node, pnpm: $pnpm, python: $python}}'

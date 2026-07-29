@@ -177,7 +177,15 @@ CMD ["/bin/bash"]
 
 FROM public AS public-test
 ARG BACKEND
-RUN /usr/local/bin/verify-runner-image public "${BACKEND}" \
+ARG MESH_LLM_REVISION
+ARG CUDA_SERIES=none
+ARG ROCM_VERSION=none
+RUN /usr/local/bin/verify-runner-image \
+      public \
+      "${BACKEND}" \
+      "${MESH_LLM_REVISION}" \
+      "${CUDA_SERIES}" \
+      "${ROCM_VERSION}" \
     && /__e/node24/bin/node -e 'console.log("node ok")'
 
 FROM selected-backend AS self-hosted
@@ -212,5 +220,13 @@ ENTRYPOINT ["/home/runner/run.sh"]
 
 FROM self-hosted AS self-hosted-test
 ARG BACKEND
-RUN /usr/local/bin/verify-runner-image self-hosted "${BACKEND}" \
+ARG MESH_LLM_REVISION
+ARG CUDA_SERIES=none
+ARG ROCM_VERSION=none
+RUN /usr/local/bin/verify-runner-image \
+      self-hosted \
+      "${BACKEND}" \
+      "${MESH_LLM_REVISION}" \
+      "${CUDA_SERIES}" \
+      "${ROCM_VERSION}" \
     && /__e/node24/bin/node -e 'console.log("node ok")'
