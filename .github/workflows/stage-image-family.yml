@@ -1,0 +1,553 @@
+name: Stage Runner Image Family
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Runner execution environment
+        type: string
+        required: true
+      backend_id:
+        description: Published backend family identifier
+        type: string
+        required: true
+      backend_name:
+        description: Docker backend stage name
+        type: string
+        required: true
+      cuda_series:
+        description: CUDA series or none
+        type: string
+        required: true
+      rocm_version:
+        description: ROCm version or none
+        type: string
+        required: true
+      architectures:
+        description: Expected comma-separated OCI architectures
+        type: string
+        required: true
+      mesh_revision:
+        description: Full MeshLLM source revision
+        type: string
+        required: true
+      runner_images_revision:
+        description: Full runner-images source revision
+        type: string
+        required: true
+      execution_mode:
+        description: Validation, candidate staging, or production promotion
+        type: string
+        required: true
+      canary_id:
+        description: Stable cache identity for trusted validation canaries
+        type: string
+        required: true
+
+env:
+  IMAGE: ghcr.io/mesh-llm/mesh-llm-cuda-runner
+
+jobs:
+  build_platform:
+    name: ${{ inputs.environment }} ${{ inputs.backend_id }} ${{ matrix.platform_id }}
+    runs-on: >-
+      ${{
+        github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+        && github.ref == 'refs/heads/main'
+        && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+        && (
+          github.event_name == 'push'
+          || github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+        )
+        && vars.DEPOT_RUNNERS_ENABLED == 'true'
+        && (
+          matrix.platform_id == 'amd64'
+          && 'depot-ubuntu-24.04-16'
+          || 'depot-ubuntu-24.04-arm-16'
+        )
+        || (
+          matrix.platform_id == 'amd64'
+          && 'ubuntu-24.04'
+          || 'ubuntu-24.04-arm'
+        )
+      }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: >-
+        ${{
+          fromJSON(
+            inputs.architectures == 'amd64'
+            && '{"include":[{"platform":"linux/amd64","platform_id":"amd64"}]}'
+            || '{"include":[{"platform":"linux/amd64","platform_id":"amd64"},{"platform":"linux/arm64","platform_id":"arm64"}]}'
+          )
+        }}
+    steps:
+      - name: Enforce reusable workflow trust boundary
+        shell: bash
+        env:
+          ARCHITECTURES: ${{ inputs.architectures }}
+          CANARY_ID: ${{ inputs.canary_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXECUTION_MODE: ${{ inputs.execution_mode }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SOURCE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          expected_repository=Mesh-LLM/mesh-llm-runner-images
+          expected_workflow="$expected_repository/.github/workflows/build-and-push.yml@refs/heads/main"
+          [[ "$REPOSITORY" == "$expected_repository" ]] || {
+            echo "reusable workflow rejected repository: $REPOSITORY" >&2
+            exit 1
+          }
+          [[ "$ARCHITECTURES" == amd64 || "$ARCHITECTURES" == amd64,arm64 ]] || {
+            echo "unsupported architecture set: $ARCHITECTURES" >&2
+            exit 1
+          }
+          [[ "$CANARY_ID" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || {
+            echo "invalid canary cache identity: $CANARY_ID" >&2
+            exit 1
+          }
+          case "$EXECUTION_MODE" in
+            validate) ;;
+            stage|promote)
+              [[ "$WORKFLOW_SOURCE_REF" == refs/heads/main ]] || {
+                echo "$EXECUTION_MODE requires refs/heads/main" >&2
+                exit 1
+              }
+              [[ "$WORKFLOW_REF" == "$expected_workflow" ]] || {
+                echo "$EXECUTION_MODE rejected caller workflow: $WORKFLOW_REF" >&2
+                exit 1
+              }
+              case "$EVENT_NAME" in
+                push|schedule|workflow_dispatch) ;;
+                *) echo "$EXECUTION_MODE rejected event: $EVENT_NAME" >&2; exit 1 ;;
+              esac
+              ;;
+            *) echo "unsupported execution mode: $EXECUTION_MODE" >&2; exit 1 ;;
+          esac
+          [[ "$EVENT_NAME" != push || "$EXECUTION_MODE" == stage ]] || {
+            echo "push events may stage candidates but cannot promote aliases" >&2
+            exit 1
+          }
+          [[ "$EVENT_NAME" != schedule || "$EXECUTION_MODE" == promote ]] || {
+            echo "scheduled events must use promote mode" >&2
+            exit 1
+          }
+
+      - name: Checkout runner image sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download manifest bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: mesh-manifest-bundles
+          path: build-context/manifests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to GHCR for candidate staging
+        if: inputs.execution_mode != 'validate'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build platform image once
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          target: ${{ inputs.execution_mode != 'validate' && inputs.environment || format('{0}-test', inputs.environment) }}
+          platforms: ${{ matrix.platform }}
+          outputs: ${{ inputs.execution_mode != 'validate' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || '' }}
+          labels: |
+            io.mesh-llm.runner.environment=${{ inputs.environment }}
+            io.mesh-llm.runner.backend=${{ inputs.backend_id }}
+            io.mesh-llm.source.revision=${{ inputs.mesh_revision }}
+            io.mesh-llm.runner-images.revision=${{ inputs.runner_images_revision }}
+          build-args: |
+            BACKEND=${{ inputs.backend_name }}
+            RUNNER_ENVIRONMENT=${{ inputs.environment }}
+            MESH_LLM_REVISION=${{ inputs.mesh_revision }}
+            RUNNER_IMAGES_REVISION=${{ inputs.runner_images_revision }}
+            CUDA_SERIES=${{ inputs.cuda_series }}
+            ROCM_VERSION=${{ inputs.rocm_version }}
+          cache-from: |
+            type=gha,scope=${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-trusted
+            ${{ inputs.execution_mode == 'validate' && github.event_name == 'workflow_dispatch' && format('type=gha,scope={0}-{1}-{2}-canary-{3}', inputs.environment, inputs.backend_id, matrix.platform_id, inputs.canary_id) || '' }}
+          cache-to: >-
+            ${{
+              inputs.execution_mode != 'validate'
+              && format('type=gha,mode=max,scope={0}-{1}-{2}-trusted', inputs.environment, inputs.backend_id, matrix.platform_id)
+              || (
+                github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+                && github.ref == 'refs/heads/main'
+                && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+                && github.event_name == 'workflow_dispatch'
+                && format('type=gha,mode=min,scope={0}-{1}-{2}-canary-{3}', inputs.environment, inputs.backend_id, matrix.platform_id, inputs.canary_id)
+                || ''
+              )
+            }}
+          provenance: ${{ inputs.execution_mode != 'validate' && 'mode=max' || 'false' }}
+          sbom: ${{ inputs.execution_mode != 'validate' }}
+
+      - name: Capture immutable platform candidate
+        if: inputs.execution_mode != 'validate'
+        id: candidate
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          PLATFORM_ID: ${{ matrix.platform_id }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BACKEND_ID: ${{ inputs.backend_id }}
+          BACKEND_NAME: ${{ inputs.backend_name }}
+          CUDA_SERIES: ${{ inputs.cuda_series }}
+          ROCM_VERSION: ${{ inputs.rocm_version }}
+          MESH_REVISION: ${{ inputs.mesh_revision }}
+          RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          raw_manifest="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --raw)"
+          if jq -e '.manifests | type == "array"' <<< "$raw_manifest" >/dev/null; then
+            jq -e \
+              --arg architecture "$PLATFORM_ID" \
+              '
+                .schemaVersion == 2
+                and all(
+                  .manifests[];
+                  (
+                    .platform.os == "linux"
+                    and .platform.architecture == $architecture
+                  )
+                  or (
+                    .platform.os == "unknown"
+                    and .platform.architecture == "unknown"
+                    and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+                  )
+                )
+                and (
+                  [
+                    .manifests[]
+                    | select(
+                        .platform.os == "linux"
+                        and .platform.architecture == $architecture
+                      )
+                  ]
+                  | length
+                ) == 1
+              ' <<< "$raw_manifest" >/dev/null
+            child_digest="$(
+              jq -er \
+                --arg architecture "$PLATFORM_ID" \
+                '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture) | .digest' \
+                <<< "$raw_manifest"
+            )"
+          else
+            jq -e \
+              '
+                .schemaVersion == 2
+                and (.config.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+                and (.layers | type == "array")
+              ' <<< "$raw_manifest" >/dev/null
+            child_digest="$DIGEST"
+          fi
+          [[ "$child_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          output="/tmp/candidate-platform-${PLATFORM_ID}.json"
+          jq -n \
+            --arg image "$IMAGE" \
+            --arg environment "$ENVIRONMENT" \
+            --arg backend_id "$BACKEND_ID" \
+            --arg backend_name "$BACKEND_NAME" \
+            --arg cuda_series "$CUDA_SERIES" \
+            --arg rocm_version "$ROCM_VERSION" \
+            --arg runner_images_revision "$RUNNER_IMAGES_REVISION" \
+            --arg mesh_revision "$MESH_REVISION" \
+            --arg architecture "$PLATFORM_ID" \
+            --arg digest "$DIGEST" \
+            --arg child_digest "$child_digest" \
+            '{
+              schema: 1,
+              type: "mesh-llm-runner-image-platform-candidate",
+              image: $image,
+              environment: $environment,
+              backend: {
+                id: $backend_id,
+                name: $backend_name,
+                cuda_series: (if $cuda_series == "none" then null else $cuda_series end),
+                rocm_version: (if $rocm_version == "none" then null else $rocm_version end)
+              },
+              runner_images_revision: $runner_images_revision,
+              mesh_revision: $mesh_revision,
+              platform: {
+                os: "linux",
+                architecture: $architecture
+              },
+              digest: $digest,
+              child_digest: $child_digest
+            }' > "$output"
+          echo "descriptor=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact staged platform digest
+        if: inputs.execution_mode != 'validate'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BACKEND_NAME: ${{ inputs.backend_name }}
+          CUDA_SERIES: ${{ inputs.cuda_series }}
+          ROCM_VERSION: ${{ inputs.rocm_version }}
+          MESH_REVISION: ${{ inputs.mesh_revision }}
+          RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --file Dockerfile.verify \
+            --platform "$PLATFORM" \
+            --build-arg "CANDIDATE_IMAGE=${IMAGE}@${DIGEST}" \
+            --build-arg "EXPECTED_ENVIRONMENT=${ENVIRONMENT}" \
+            --build-arg "EXPECTED_BACKEND=${BACKEND_NAME}" \
+            --build-arg "EXPECTED_MESH_REVISION=${MESH_REVISION}" \
+            --build-arg "EXPECTED_RUNNER_IMAGES_REVISION=${RUNNER_IMAGES_REVISION}" \
+            --build-arg "EXPECTED_CUDA_SERIES=${CUDA_SERIES}" \
+            --build-arg "EXPECTED_ROCM_VERSION=${ROCM_VERSION}" \
+            --output type=cacheonly \
+            --progress plain \
+            .
+
+      - name: Upload verified platform candidate
+        if: inputs.execution_mode != 'validate'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-platform-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}
+          path: ${{ steps.candidate.outputs.descriptor }}
+          if-no-files-found: error
+          retention-days: 1
+
+  assemble_family_index:
+    name: Assemble ${{ inputs.environment }} ${{ inputs.backend_id }} index
+    if: inputs.execution_mode != 'validate'
+    needs: build_platform
+    runs-on: >-
+      ${{
+        github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+        && github.ref == 'refs/heads/main'
+        && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+        && (
+          github.event_name == 'push'
+          || github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+        )
+        && vars.DEPOT_RUNNERS_ENABLED == 'true'
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-24.04'
+      }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout runner image sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download verified platform candidates
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: candidate-platform-${{ inputs.environment }}-${{ inputs.backend_id }}-*
+          path: /tmp/platform-candidates
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to GHCR for index staging
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Assemble and validate immutable family index
+        id: candidate
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          BACKEND_ID: ${{ inputs.backend_id }}
+          BACKEND_NAME: ${{ inputs.backend_name }}
+          CUDA_SERIES: ${{ inputs.cuda_series }}
+          ROCM_VERSION: ${{ inputs.rocm_version }}
+          ARCHITECTURES: ${{ inputs.architectures }}
+          MESH_REVISION: ${{ inputs.mesh_revision }}
+          RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
+        run: |
+          set -euo pipefail
+          mapfile -t descriptor_files < <(
+            find /tmp/platform-candidates -maxdepth 1 -type f -name 'candidate-platform-*.json' -print \
+              | sort
+          )
+          IFS=',' read -r -a expected_architectures <<< "$ARCHITECTURES"
+          [[ "${#descriptor_files[@]}" -eq "${#expected_architectures[@]}" ]]
+
+          expected_cuda_json="$(if [[ "$CUDA_SERIES" == none ]]; then echo null; else jq -Rn --arg value "$CUDA_SERIES" '$value'; fi)"
+          expected_rocm_json="$(if [[ "$ROCM_VERSION" == none ]]; then echo null; else jq -Rn --arg value "$ROCM_VERSION" '$value'; fi)"
+          for descriptor_file in "${descriptor_files[@]}"; do
+            jq -e \
+              --arg image "$IMAGE" \
+              --arg environment "$ENVIRONMENT" \
+              --arg backend_id "$BACKEND_ID" \
+              --arg backend_name "$BACKEND_NAME" \
+              --argjson cuda_series "$expected_cuda_json" \
+              --argjson rocm_version "$expected_rocm_json" \
+              --arg mesh_revision "$MESH_REVISION" \
+              --arg runner_images_revision "$RUNNER_IMAGES_REVISION" \
+              '
+                def exact_keys($expected): (keys | sort) == ($expected | sort);
+                def digest: type == "string" and test("^sha256:[0-9a-f]{64}$");
+                type == "object"
+                and exact_keys([
+                  "backend",
+                  "child_digest",
+                  "digest",
+                  "environment",
+                  "image",
+                  "mesh_revision",
+                  "platform",
+                  "runner_images_revision",
+                  "schema",
+                  "type"
+                ])
+                and .schema == 1
+                and .type == "mesh-llm-runner-image-platform-candidate"
+                and .image == $image
+                and .environment == $environment
+                and .backend == {
+                  id: $backend_id,
+                  name: $backend_name,
+                  cuda_series: $cuda_series,
+                  rocm_version: $rocm_version
+                }
+                and .mesh_revision == $mesh_revision
+                and .runner_images_revision == $runner_images_revision
+                and (.platform | exact_keys(["architecture", "os"]))
+                and .platform.os == "linux"
+                and (.platform.architecture == "amd64" or .platform.architecture == "arm64")
+                and (.digest | digest)
+                and (.child_digest | digest)
+              ' "$descriptor_file" >/dev/null
+          done
+
+          actual_architectures="$(
+            jq -sc '[.[].platform.architecture] | sort' "${descriptor_files[@]}"
+          )"
+          expected_architectures_json="$(
+            printf '%s\n' "${expected_architectures[@]}" | jq -R . | jq -sc 'sort'
+          )"
+          [[ "$actual_architectures" == "$expected_architectures_json" ]]
+          [[ "$(jq -sc '[.[].platform.architecture] | unique | length' "${descriptor_files[@]}")" -eq "${#descriptor_files[@]}" ]]
+          [[ "$(jq -sc '[.[].digest] | unique | length' "${descriptor_files[@]}")" -eq "${#descriptor_files[@]}" ]]
+
+          mapfile -t sources < <(
+            jq -r --arg image "$IMAGE" '"\($image)@\(.digest)"' "${descriptor_files[@]}"
+          )
+          expected_children="$(
+            jq -sc \
+              '[.[] | {
+                architecture: .platform.architecture,
+                digest: .child_digest,
+                os: .platform.os
+              }] | sort_by(.architecture)' \
+              "${descriptor_files[@]}"
+          )"
+          candidate_tag="${IMAGE}:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ENVIRONMENT}-${BACKEND_ID}"
+          docker buildx imagetools create --tag "$candidate_tag" "${sources[@]}"
+          manifest_json="$(docker buildx imagetools inspect "$candidate_tag" --format '{{json .Manifest}}')"
+          digest="$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest_json")"
+          source_reference="${IMAGE}@${digest}"
+          raw_manifest="$(docker buildx imagetools inspect "$source_reference" --raw)"
+          actual_children="$(
+            jq -ce \
+              '
+                if (
+                  .schemaVersion == 2
+                  and (.manifests | type == "array")
+                  and all(
+                    .manifests[];
+                    .platform.os == "linux"
+                    or (
+                      .platform.os == "unknown"
+                      and .platform.architecture == "unknown"
+                      and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+                    )
+                  )
+                ) then
+                  [
+                    .manifests[]
+                    | select(.platform.os == "linux")
+                    | {
+                        architecture: .platform.architecture,
+                        digest: .digest,
+                        os: .platform.os
+                      }
+                  ] | sort_by(.architecture)
+                else
+                  error("invalid candidate index")
+                end
+              ' <<< "$raw_manifest"
+          )"
+          [[ "$actual_children" == "$expected_children" ]]
+
+          descriptor="/tmp/candidate-index-${ENVIRONMENT}-${BACKEND_ID}.json"
+          jq -n \
+            --arg image "$IMAGE" \
+            --arg environment "$ENVIRONMENT" \
+            --arg backend_id "$BACKEND_ID" \
+            --arg backend_name "$BACKEND_NAME" \
+            --arg cuda_series "$CUDA_SERIES" \
+            --arg rocm_version "$ROCM_VERSION" \
+            --arg runner_images_revision "$RUNNER_IMAGES_REVISION" \
+            --arg mesh_revision "$MESH_REVISION" \
+            --arg digest "$digest" \
+            --argjson children "$actual_children" \
+            '{
+              schema: 1,
+              type: "mesh-llm-runner-image-candidate",
+              image: $image,
+              environment: $environment,
+              backend: {
+                id: $backend_id,
+                name: $backend_name,
+                cuda_series: (if $cuda_series == "none" then null else $cuda_series end),
+                rocm_version: (if $rocm_version == "none" then null else $rocm_version end)
+              },
+              runner_images_revision: $runner_images_revision,
+              mesh_revision: $mesh_revision,
+              digest: $digest,
+              children: $children
+            }' > "$descriptor"
+          scripts/validate-candidate-descriptor.sh \
+            --descriptor "$descriptor" \
+            --image "$IMAGE" \
+            --environment "$ENVIRONMENT" \
+            --backend-id "$BACKEND_ID" \
+            --backend-name "$BACKEND_NAME" \
+            --cuda-series "$CUDA_SERIES" \
+            --rocm-version "$ROCM_VERSION" \
+            --mesh-revision "$MESH_REVISION" \
+            --runner-images-revision "$RUNNER_IMAGES_REVISION" \
+            --architectures "$ARCHITECTURES"
+          echo "descriptor=$descriptor" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified family candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-index-${{ inputs.environment }}-${{ inputs.backend_id }}
+          path: ${{ steps.candidate.outputs.descriptor }}
+          if-no-files-found: error
+          retention-days: 1

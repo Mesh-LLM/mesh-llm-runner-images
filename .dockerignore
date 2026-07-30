@@ -1,5 +1,6 @@
 *
 !Dockerfile
+!Dockerfile.verify
 !profiles/**
 !scripts/**
 !build-context/**
