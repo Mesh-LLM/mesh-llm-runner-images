@@ -3,7 +3,6 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 descriptor="${1:-$repository_root/config/runner-image-families.json}"
-runner_provider="${2:-github}"
 
 [[ -f "$descriptor" ]] || {
   echo "runner image family descriptor does not exist: $descriptor" >&2
@@ -13,11 +12,6 @@ command -v jq >/dev/null || {
   echo "jq is required" >&2
   exit 1
 }
-[[ "$runner_provider" == github || "$runner_provider" == depot ]] || {
-  echo "runner provider must be 'github' or 'depot': $runner_provider" >&2
-  exit 1
-}
-
 if ! jq -e '
   def exact_keys($expected): (keys | sort) == ($expected | sort);
   def identifier: type == "string" and test("^[a-z0-9][a-z0-9-]*$");
@@ -120,35 +114,7 @@ if ! jq -e '
   exit 1
 fi
 
-jq -ce \
-  --arg runner_provider "$runner_provider" \
-  '
-  def platform($architecture):
-    if $runner_provider == "github" and $architecture == "amd64" then
-      {
-        platform: "linux/amd64",
-        platform_id: "amd64",
-        runner: "ubuntu-24.04"
-      }
-    elif $runner_provider == "github" then
-      {
-        platform: "linux/arm64",
-        platform_id: "arm64",
-        runner: "ubuntu-24.04-arm"
-      }
-    elif $architecture == "amd64" then
-      {
-        platform: "linux/amd64",
-        platform_id: "amd64",
-        runner: "depot-ubuntu-24.04-16"
-      }
-    else
-      {
-        platform: "linux/arm64",
-        platform_id: "arm64",
-        runner: "depot-ubuntu-24.04-arm-16"
-      }
-    end;
+jq -ce '
   def families:
     . as $root
     | [
@@ -160,10 +126,7 @@ jq -ce \
             backend_name: .name,
             cuda_series: (.cuda_series // "none"),
             rocm_version: (.rocm_version // "none"),
-            architectures: (.architectures | join(",")),
-            platform_matrix: {
-              include: [.architectures[] | platform(.)]
-            }
+            architectures: (.architectures | join(","))
           }
       ];
 
@@ -192,7 +155,6 @@ jq -ce \
                   ][0] // ""
                 )
               }
-            | del(.platform_matrix)
           ]
           + [
               $root.indexes[]

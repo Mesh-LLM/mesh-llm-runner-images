@@ -12,14 +12,23 @@ on:
         description: MeshLLM git ref whose manifests should be injected
         required: true
         default: main
-      push:
-        description: Push images to GHCR after tests
-        type: boolean
+      operation:
+        description: Validate only, stage verified candidates, or promote production aliases
+        type: choice
         required: true
-        default: true
+        default: validate
+        options:
+          - validate
+          - stage
+          - promote
+      canary_id:
+        description: Stable lowercase cache identity for repeated trusted canaries
+        type: string
+        required: true
+        default: default
 
 concurrency:
-  group: runner-image-${{ (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push)) && 'registry-mutation' || github.ref }}
+  group: runner-image-${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.operation != 'validate')) && 'registry-mutation' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -35,6 +44,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      execution_mode: ${{ steps.mode.outputs.execution_mode }}
       orchestration_runner: ${{ steps.runners.outputs.orchestration_runner }}
       runner_provider: ${{ steps.runners.outputs.runner_provider }}
     steps:
@@ -70,6 +80,40 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Select execution mode
+        id: mode
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          REQUESTED_MODE: ${{ inputs.operation || 'validate' }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SOURCE_REF: ${{ github.ref }}
+          CANARY_ID: ${{ inputs.canary_id || 'default' }}
+        run: |
+          set -euo pipefail
+          [[ "$CANARY_ID" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || {
+            echo "invalid canary cache identity: $CANARY_ID" >&2
+            exit 1
+          }
+          selection="$(
+            scripts/select-workflow-mode.sh \
+              "$EVENT_NAME" \
+              "$REPOSITORY" \
+              "$WORKFLOW_SOURCE_REF" \
+              "$WORKFLOW_REF" \
+              "$REQUESTED_MODE"
+          )"
+          echo "execution_mode=$(jq -er '.execution_mode' <<< "$selection")" \
+            >> "$GITHUB_OUTPUT"
+          {
+            echo "## Execution mode"
+            echo
+            echo '```json'
+            jq . <<< "$selection"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install verified actionlint
         run: |
           scripts/install-actionlint.sh "$RUNNER_TEMP/actionlint-bin"
@@ -81,6 +125,7 @@ jobs:
       - name: Test immutable candidate contract
         run: |
           tests/candidate-promotion.test.sh
+          tests/cohort-promotion.test.sh
           tests/promotion-tags.test.sh
           tests/workflow-matrix.test.sh
 
@@ -96,16 +141,17 @@ jobs:
     outputs:
       family_matrix: ${{ steps.metadata.outputs.family_matrix }}
       promotion_matrix: ${{ steps.metadata.outputs.promotion_matrix }}
+      canary_id: ${{ steps.metadata.outputs.canary_id }}
+      execution_mode: ${{ steps.metadata.outputs.execution_mode }}
       mesh_revision: ${{ steps.metadata.outputs.mesh_revision }}
       orchestration_runner: ${{ steps.metadata.outputs.orchestration_runner }}
-      runner_provider: ${{ steps.metadata.outputs.runner_provider }}
       runner_images_revision: ${{ steps.metadata.outputs.runner_images_revision }}
-      should_publish: ${{ steps.metadata.outputs.should_publish }}
       timestamp: ${{ steps.metadata.outputs.timestamp }}
     steps:
       - name: Checkout runner image sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout MeshLLM source
@@ -120,34 +166,43 @@ jobs:
         id: metadata
         shell: bash
         env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANARY_ID: ${{ inputs.canary_id || 'default' }}
           EVENT_NAME: ${{ github.event_name }}
-          DISPATCH_PUSH: ${{ inputs.push && 'true' || 'false' }}
+          EXECUTION_MODE: ${{ needs.policy.outputs.execution_mode }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           ORCHESTRATION_RUNNER: ${{ needs.policy.outputs.orchestration_runner }}
-          RUNNER_PROVIDER: ${{ needs.policy.outputs.runner_provider }}
         run: |
           set -euo pipefail
           mesh_revision="$(git -C _target/mesh-llm rev-parse HEAD)"
           runner_images_revision="$(git rev-parse HEAD)"
-          case "$EVENT_NAME" in
-            pull_request) should_publish=false ;;
-            workflow_dispatch) should_publish="$DISPATCH_PUSH" ;;
-            push|schedule) should_publish=true ;;
-            *) echo "unsupported event: $EVENT_NAME" >&2; exit 1 ;;
-          esac
 
-          matrices="$(
-            scripts/generate-workflow-matrices.sh \
-              config/runner-image-families.json \
-              "$RUNNER_PROVIDER"
-          )"
-          family_matrix="$(jq -c '.family_matrix' <<< "$matrices")"
+          matrices="$(scripts/generate-workflow-matrices.sh)"
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            changed_files="$RUNNER_TEMP/runner-image-changed-files.txt"
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+            plan="$(
+              scripts/plan-pr-families.sh \
+                config/runner-image-families.json \
+                "$changed_files"
+            )"
+            family_matrix="$(jq -c '.family_matrix' <<< "$plan")"
+            {
+              echo "## Pull-request image-family plan"
+              echo
+              jq -r '"- Changed files: \(.selection.changed_files)\n- Selected families: \(.selection.selected_families)\n- Exhaustive: \(.selection.exhaustive)"' \
+                <<< "$plan"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            family_matrix="$(jq -c '.family_matrix' <<< "$matrices")"
+          fi
           promotion_matrix="$(jq -c '.promotion_matrix' <<< "$matrices")"
           {
+            echo "canary_id=$CANARY_ID"
+            echo "execution_mode=$EXECUTION_MODE"
             echo "mesh_revision=$mesh_revision"
             echo "orchestration_runner=$ORCHESTRATION_RUNNER"
-            echo "runner_provider=$RUNNER_PROVIDER"
             echo "runner_images_revision=$runner_images_revision"
-            echo "should_publish=$should_publish"
             echo "timestamp=$(date -u +%Y%m%d%H%M%S)"
             echo "family_matrix=$(jq -c . <<< "$family_matrix")"
             echo "promotion_matrix=$promotion_matrix"
@@ -174,7 +229,7 @@ jobs:
   validate_families:
     name: Validate ${{ matrix.environment }} ${{ matrix.backend_id }}
     needs: prepare
-    if: github.event_name == 'pull_request' || needs.prepare.outputs.should_publish == 'false'
+    if: needs.prepare.outputs.execution_mode == 'validate'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.family_matrix) }}
@@ -188,16 +243,22 @@ jobs:
       cuda_series: ${{ matrix.cuda_series }}
       rocm_version: ${{ matrix.rocm_version }}
       architectures: ${{ matrix.architectures }}
-      platform_matrix: ${{ toJSON(matrix.platform_matrix) }}
       mesh_revision: ${{ needs.prepare.outputs.mesh_revision }}
       runner_images_revision: ${{ needs.prepare.outputs.runner_images_revision }}
-      orchestration_runner: ${{ needs.prepare.outputs.orchestration_runner }}
-      publish: false
+      execution_mode: validate
+      canary_id: ${{ needs.prepare.outputs.canary_id }}
 
   stage_families:
     name: Stage ${{ matrix.environment }} ${{ matrix.backend_id }}
     needs: prepare
-    if: github.event_name != 'pull_request' && needs.prepare.outputs.should_publish == 'true'
+    if: >-
+      github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+      && (
+        needs.prepare.outputs.execution_mode == 'stage'
+        || needs.prepare.outputs.execution_mode == 'promote'
+      )
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.family_matrix) }}
@@ -212,16 +273,22 @@ jobs:
       cuda_series: ${{ matrix.cuda_series }}
       rocm_version: ${{ matrix.rocm_version }}
       architectures: ${{ matrix.architectures }}
-      platform_matrix: ${{ toJSON(matrix.platform_matrix) }}
       mesh_revision: ${{ needs.prepare.outputs.mesh_revision }}
       runner_images_revision: ${{ needs.prepare.outputs.runner_images_revision }}
-      orchestration_runner: ${{ needs.prepare.outputs.orchestration_runner }}
-      publish: true
+      execution_mode: ${{ needs.prepare.outputs.execution_mode }}
+      canary_id: ${{ needs.prepare.outputs.canary_id }}
 
   assemble_self_hosted_compatibility:
     name: Assemble self-hosted compatibility index
     needs: [prepare, stage_families]
-    if: needs.prepare.outputs.should_publish == 'true'
+    if: >-
+      github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+      && (
+        needs.prepare.outputs.execution_mode == 'stage'
+        || needs.prepare.outputs.execution_mode == 'promote'
+      )
     runs-on: ${{ needs.prepare.outputs.orchestration_runner }}
     timeout-minutes: 15
     permissions:
@@ -422,7 +489,11 @@ jobs:
   promote_versioned:
     name: Promote versioned ${{ matrix.tag_stem }}
     needs: [prepare, stage_families, assemble_self_hosted_compatibility]
-    if: needs.prepare.outputs.should_publish == 'true'
+    if: >-
+      github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+      && needs.prepare.outputs.execution_mode == 'promote'
     runs-on: ${{ needs.prepare.outputs.orchestration_runner }}
     timeout-minutes: 15
     permissions:
@@ -474,6 +545,7 @@ jobs:
           set -euo pipefail
           descriptor="$(find /tmp/candidate -maxdepth 1 -type f -name '*.json' -print -quit)"
           [[ -n "$descriptor" ]]
+          content_digest="$(jq -er '.digest' "$descriptor")"
           mapfile -t promotion_tags < <(
             scripts/generate-promotion-tags.sh \
               versioned \
@@ -482,7 +554,8 @@ jobs:
               "$COMPATIBILITY_TAG_STEM" \
               "$TIMESTAMP" \
               "$MESH_REVISION" \
-              "$RUNNER_IMAGES_REVISION"
+              "$RUNNER_IMAGES_REVISION" \
+              "$content_digest"
           )
           scripts/promote-image-digest.sh \
             --descriptor "$descriptor" \
@@ -506,77 +579,107 @@ jobs:
           subject-digest: ${{ steps.promote.outputs.digest }}
           push-to-registry: true
 
-  promote_latest:
-    name: Promote latest ${{ matrix.tag_stem }}
+  prepare_latest_cohort:
+    name: Prepare latest cohort manifest
     needs: [prepare, promote_versioned]
-    if: needs.prepare.outputs.should_publish == 'true'
+    if: >-
+      github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+      && needs.prepare.outputs.execution_mode == 'promote'
     runs-on: ${{ needs.prepare.outputs.orchestration_runner }}
     timeout-minutes: 10
     permissions:
       contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.promotion_matrix) }}
+      packages: read
     steps:
       - name: Checkout runner image sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Download verified candidate descriptor
+      - name: Download complete verified candidate cohort
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: ${{ matrix.artifact }}
-          path: /tmp/candidate
+          pattern: candidate-index-*
+          path: /tmp/candidate-cohort
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - name: Log in to GHCR for latest promotion
+      - name: Log in to GHCR for latest preflight
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Promote verified latest tag
-        shell: bash
+      - name: Capture target and previous latest digests
         env:
-          ENVIRONMENT: ${{ matrix.environment }}
-          BACKEND_ID: ${{ matrix.backend_id }}
-          BACKEND_NAME: ${{ matrix.backend_name }}
-          CUDA_SERIES: ${{ matrix.cuda_series }}
-          ROCM_VERSION: ${{ matrix.rocm_version }}
-          ARCHITECTURES: ${{ matrix.architectures }}
-          TAG_STEM: ${{ matrix.tag_stem }}
-          COMPATIBILITY_TAG_STEM: ${{ matrix.compatibility_tag_stem }}
+          PROMOTION_MATRIX: ${{ needs.prepare.outputs.promotion_matrix }}
           TIMESTAMP: ${{ needs.prepare.outputs.timestamp }}
           MESH_REVISION: ${{ needs.prepare.outputs.mesh_revision }}
           RUNNER_IMAGES_REVISION: ${{ needs.prepare.outputs.runner_images_revision }}
         run: |
           set -euo pipefail
-          descriptor="$(find /tmp/candidate -maxdepth 1 -type f -name '*.json' -print -quit)"
-          [[ -n "$descriptor" ]]
-          mapfile -t promotion_tags < <(
-            scripts/generate-promotion-tags.sh \
-              latest \
-              "$IMAGE" \
-              "$TAG_STEM" \
-              "$COMPATIBILITY_TAG_STEM" \
-              "$TIMESTAMP" \
-              "$MESH_REVISION" \
-              "$RUNNER_IMAGES_REVISION"
-          )
-          scripts/promote-image-digest.sh \
-            --descriptor "$descriptor" \
+          printf '%s\n' "$PROMOTION_MATRIX" > /tmp/promotion-matrix.json
+          scripts/generate-latest-cohort.sh \
+            --descriptors /tmp/candidate-cohort \
+            --matrix /tmp/promotion-matrix.json \
             --image "$IMAGE" \
-            --environment "$ENVIRONMENT" \
-            --backend-id "$BACKEND_ID" \
-            --backend-name "$BACKEND_NAME" \
-            --cuda-series "$CUDA_SERIES" \
-            --rocm-version "$ROCM_VERSION" \
+            --timestamp "$TIMESTAMP" \
             --mesh-revision "$MESH_REVISION" \
             --runner-images-revision "$RUNNER_IMAGES_REVISION" \
-            --architectures "$ARCHITECTURES" \
-            "${promotion_tags[@]}"
+            --output /tmp/latest-cohort.json
+          jq . /tmp/latest-cohort.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload latest cohort reconciliation manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: latest-cohort-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/latest-cohort.json
+          if-no-files-found: error
+          retention-days: 14
+
+  promote_latest:
+    name: Reconcile latest cohort
+    needs: [prepare, prepare_latest_cohort]
+    if: >-
+      github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+      && needs.prepare.outputs.execution_mode == 'promote'
+    runs-on: ${{ needs.prepare.outputs.orchestration_runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout runner image sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download latest cohort reconciliation manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: latest-cohort-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/latest-cohort
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to GHCR for latest reconciliation
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Converge the eventual latest cohort
+        run: |
+          set -euo pipefail
+          manifest="$(find /tmp/latest-cohort -type f -name '*.json' -print -quit)"
+          [[ -n "$manifest" ]]
+          scripts/reconcile-image-cohort.sh "$manifest" target

@@ -6,17 +6,30 @@ expected_backend="${2:-${MESH_RUNNER_BACKEND:-}}"
 expected_revision="${3:-}"
 expected_cuda_series="${4:-}"
 expected_rocm_version="${5:-}"
+expected_runner_images_revision="${6:-}"
 actual_environment="$(cat /etc/mesh-runner-environment)"
 actual_backend="$(cat /etc/mesh-runner-backend)"
 actual_revision="$(cat /etc/mesh-llm-revision)"
 actual_cuda_series="$(cat /etc/mesh-runner-cuda-series)"
 actual_rocm_version="$(cat /etc/mesh-runner-rocm-version)"
+actual_runner_images_revision="$(cat /etc/mesh-runner-images-revision)"
 verification_directory="$(mktemp -d)"
 trap 'rm -rf "$verification_directory"' EXIT
 
 if [[ -n "$expected_environment" && "$actual_environment" != "$expected_environment" ]]; then
   echo "expected environment '$expected_environment', found '$actual_environment'" >&2
   exit 1
+fi
+
+if [[ -n "$expected_runner_images_revision" ]]; then
+  [[ "$expected_runner_images_revision" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "expected runner-images revision must be a full lowercase git SHA" >&2
+    exit 1
+  }
+  if [[ "$actual_runner_images_revision" != "$expected_runner_images_revision" ]]; then
+    echo "expected runner-images revision '$expected_runner_images_revision', found '$actual_runner_images_revision'" >&2
+    exit 1
+  fi
 fi
 
 if [[ -n "$expected_backend" && "$actual_backend" != "$expected_backend" ]]; then
@@ -131,10 +144,11 @@ jq -n \
   --arg environment "$actual_environment" \
   --arg backend "$actual_backend" \
   --arg revision "$actual_revision" \
+  --arg runner_images_revision "$actual_runner_images_revision" \
   --arg cuda_series "$actual_cuda_series" \
   --arg rocm_version "$actual_rocm_version" \
   --arg cargo "$(cargo --version)" \
   --arg node "$(node --version)" \
   --arg pnpm "$(pnpm --version)" \
   --arg python "$(python --version 2>&1)" \
-  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, backend_metadata: {cuda_series: $cuda_series, rocm_version: $rocm_version}, tools: {cargo: $cargo, node: $node, pnpm: $pnpm, python: $python}}'
+  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, runner_images_revision: $runner_images_revision, backend_metadata: {cuda_series: $cuda_series, rocm_version: $rocm_version}, tools: {cargo: $cargo, node: $node, pnpm: $pnpm, python: $python}}'

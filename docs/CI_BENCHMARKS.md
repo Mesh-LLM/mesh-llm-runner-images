@@ -19,24 +19,51 @@ second compile wave: a trusted platform image is staged by digest, verified
 through that exact digest, assembled, and promoted without another Docker
 build.
 
+## First build-once PR measurement
+
+The first complete build-once pull request exposed a different bottleneck:
+
+| Event | Run | Wall time | Allocated jobs | Aggregate job time | Slowest platform |
+|---|---|---:|---:|---:|---:|
+| Pull request | [30501276174](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30501276174) | 22m 57s | 22 | 2h 52m 59s | self-hosted ROCm 7.2 AMD64, 22m 20s |
+
+All 20 platform rows ran even though the pull request primarily changed
+workflow orchestration. They spent 70m 18s aggregate in `sending cache export`
+(about 41% of aggregate job time). The critical ROCm 7.2 row spent 1,016.8s in
+cache export alone. Executed-job queueing was at most 41s, so runner capacity
+was not the critical path.
+
+The corrected PR contract selects changed image families plus one always-on
+public CPU AMD64 contract row, reads trusted cache, and performs no PR cache
+export. Exhaustive 20-platform construction and `mode=max` trusted-cache
+population belong to main staging and the weekly promotion run.
+
 ## Depot canary protocol
 
-For the first gated pull request and trusted publish after enabling Depot:
+For the first gated pull request, trusted validation canary, and staged publish
+after enabling Depot:
 
 1. Record run wall time, aggregate job time, queue time, and the slowest matrix
    row.
-2. Repeat an unchanged manual dry run to measure warm-cache behavior.
-3. Confirm the pull request uses GitHub-hosted x86 and Arm labels even while
+2. Dispatch `operation=validate` twice from `refs/heads/main` with the same
+   lowercase `canary_id`; confirm the second run restores the stable isolated
+   `canary-<canary_id>` scope.
+3. Confirm the pull request selects only affected families plus the public CPU
+   AMD64 contract row, reads trusted cache, and exports no cache.
+4. Confirm the pull request uses GitHub-hosted x86 and Arm labels even while
    `DEPOT_RUNNERS_ENABLED=true`.
-4. Confirm a trusted `refs/heads/main` publish uses the intended 16-vCPU x86 or
+5. Confirm a trusted `refs/heads/main` validation or staging run uses the
+   intended 16-vCPU x86 or
    Arm Depot label and 4-vCPU orchestration label.
-5. Confirm a feature-branch manual dispatch remains GitHub-hosted.
-6. Confirm a pull request uses standard GitHub Actions cache and writes only
-   its `pr-<number>` scope; confirm trusted Depot publication uses its separate
-   trusted scope.
-7. Confirm trusted publication performs exactly 20 platform builds, every
-   versioned tag resolves to its candidate digest, and no `latest` tag moves
-   before the complete versioned cohort succeeds.
+6. Dispatch `operation=stage` on main and confirm it performs exactly 20
+   platform builds, exact-digest verification, and all index assemblies while
+   moving zero production aliases.
+7. Confirm a feature-branch manual dispatch defaults to `validate` and rejects
+   `stage` or `promote`.
+8. Run `operation=promote` only after staging evidence is accepted. Confirm
+   every versioned/content tag resolves to its descriptor digest, retain the
+   previous/target latest-cohort manifest, and verify serialized reconciliation
+   converges every `latest` tag.
 
 The first target is to beat the 17m 12s pull-request baseline and the 39m 15s
 successful publish baseline while cutting trusted aggregate build work roughly

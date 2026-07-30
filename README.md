@@ -45,6 +45,7 @@ docker buildx build \
   --build-arg BACKEND=cpu \
   --build-arg RUNNER_ENVIRONMENT=public \
   --build-arg MESH_LLM_REVISION="$(git -C /Users/ndizazzo/dev/mesh/mesh-llm rev-parse HEAD)" \
+  --build-arg RUNNER_IMAGES_REVISION="$(git rev-parse HEAD)" \
   --load \
   -t mesh-llm-runner:public .
 
@@ -59,29 +60,31 @@ Use target `self-hosted` and `RUNNER_ENVIRONMENT=self-hosted` for an image that 
 
 1. validates the workflow and immutable-candidate contract before expensive work;
 2. checks out the requested MeshLLM ref and generates both manifest bundles;
-3. builds every supported environment, backend, and native architecture exactly once;
+3. builds affected pull-request families plus one always-on public CPU AMD64 contract row, while trusted main and scheduled runs remain exhaustive;
 4. verifies each trusted staged image through its exact registry digest, then assembles and validates one immutable index descriptor per family;
-5. promotes timestamp, MeshLLM compatibility, and composite source-revision tags from those digests without rebuilding;
-6. moves `latest` aliases only after every versioned promotion and attestation succeeds.
+5. promotes timestamp, MeshLLM compatibility, and digest-derived immutable tags from those descriptors without rebuilding;
+6. records the complete previous/target `latest` map, then reconciles the eventual `latest` cohort from that retained manifest.
 
-Pull requests and `workflow_dispatch` runs with publication disabled build each `*-test` target once and receive no package-write permission. Trusted publishing runs push only content-addressed candidates until the cohort-wide promotion gates pass. Run-specific `candidate-*` tags are staging handles; consumers and promotion jobs use the resolved `sha256:` digest.
+Execution is explicit: `validate` builds test targets without registry writes, `stage` pushes and verifies run-scoped candidates without moving production aliases, and `promote` performs the same staging before versioned and eventual-`latest` reconciliation. Manual dispatch defaults to `validate`; any staging or promotion requires the exact repository, `refs/heads/main`, and the default-branch caller workflow. Main pushes stage candidates, while the weekly schedule performs the deliberate production promotion.
+
+Pull requests receive no package-write permission and never export maximal BuildKit caches. They read trusted cache entries and run only affected families plus the public CPU AMD64 contract row. Trusted main staging owns `mode=max` cache population. A repeated trusted validation canary uses the stable, validated `canary_id` scope with `mode=min`.
 
 Supported environments, backends, architectures, compatibility aliases, and extra indexes are declared in `config/runner-image-families.json`; `scripts/generate-workflow-matrices.sh` validates that descriptor and generates both build and promotion matrices.
 
-Pull requests always use native GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` runners. The policy job is also fixed to GitHub-hosted Ubuntu and selects the downstream provider. Trusted `main` events use Depot only when the repository or organization Actions variable `DEPOT_RUNNERS_ENABLED` is exactly `true`; otherwise they fall back to GitHub-hosted runners. Feature-branch dispatches never acquire Depot access. When enabled, compile-heavy platform jobs use Depot's 16-vCPU x86 or Arm class and orchestration uses its 4-vCPU class.
+Pull requests always use native GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` runners. The policy job is also fixed to GitHub-hosted Ubuntu and selects the downstream provider. The called family workflow independently derives literal runner labels and permits Depot only for the exact repository, default-branch caller workflow, `refs/heads/main`, a trusted event, and `DEPOT_RUNNERS_ENABLED=true`. It accepts no caller-provided runner JSON. All mismatches fall back to GitHub-hosted labels or fail before checkout.
 
 The weekly default-branch publication is intentionally Depot-eligible when that gate is enabled: it is a trusted, high-value full image rebuild. Scheduled runs on any other ref remain GitHub-hosted.
 
-This gate keeps untrusted pull requests out of Depot Cache, which is repository-scoped but not branch-isolated. GitHub-hosted pull requests use the standard GitHub Actions cache with numbered PR scopes. Trusted Depot runs use only the Depot-backed trusted scope.
+This gate keeps untrusted pull requests out of Depot Cache, which is repository-scoped but not branch-isolated. GitHub-hosted pull requests are read-only cache consumers; trusted main staging writes the Depot-backed trusted scope.
 
 Published tags are:
 
 - `<environment>-<backend>-latest`
 - `<environment>-<backend>-YYYYMMDDHHMMSS` for discovery and evaluation
 - `<environment>-<backend>-sha-<12-character MeshLLM revision>` is a mutable compatibility alias and may move when runner-image inputs change
-- `<environment>-<backend>-mesh-<full MeshLLM revision>-runner-<full runner-images revision>` is the immutable composite source identity and refuses conflicting overwrite
+- `<environment>-<backend>-digest-sha256-<64-hex manifest digest>` is the collision-proof immutable content identity and refuses conflicting overwrite
 
-Production consumers resolve one of these tags and pin its immutable manifest digest. Tags are not the production contract.
+MeshLLM and runner-images source revisions remain full OCI labels and candidate-descriptor fields. They are not used as immutable tag identity because provenance timestamps and resolved package inputs can legitimately change content for the same source pair. Production consumers resolve a selected tag and pin its immutable manifest digest; tags are not the production contract.
 
 ## Consumers
 

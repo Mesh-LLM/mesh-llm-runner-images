@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 7 ]]; then
+if [[ $# -ne 8 ]]; then
   cat >&2 <<'EOF'
 usage: generate-promotion-tags.sh \
   versioned|latest IMAGE TAG_STEM COMPATIBILITY_TAG_STEM \
-  TIMESTAMP MESH_REVISION RUNNER_IMAGES_REVISION
+  TIMESTAMP MESH_REVISION RUNNER_IMAGES_REVISION CONTENT_DIGEST
 EOF
   exit 2
 fi
@@ -17,6 +17,7 @@ compatibility_tag_stem="$4"
 timestamp="$5"
 mesh_revision="$6"
 runner_images_revision="$7"
+content_digest="$8"
 
 [[ "$phase" == versioned || "$phase" == latest ]] || {
   echo "promotion phase must be 'versioned' or 'latest': $phase" >&2
@@ -52,6 +53,10 @@ fi
   echo "runner-images revision must be a full lowercase git SHA" >&2
   exit 1
 }
+[[ "$content_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  echo "content digest must be a lowercase sha256 OCI digest" >&2
+  exit 1
+}
 
 emit_tag() {
   local mode="$1"
@@ -74,15 +79,17 @@ if [[ -n "$compatibility_tag_stem" ]]; then
 fi
 
 mesh_revision_short="${mesh_revision:0:12}"
+content_digest_hex="${content_digest#sha256:}"
 for stem in "${stems[@]}"; do
   case "$phase" in
     versioned)
       emit_tag --tag "${stem}-${timestamp}"
       # Compatibility alias: another runner-images revision may move this tag.
       emit_tag --tag "${stem}-sha-${mesh_revision_short}"
-      # Immutable source identity: both source repositories participate.
+      # Immutable content identity: source revisions remain descriptor/label
+      # metadata because provenance and resolved package inputs may vary.
       emit_tag --immutable-tag \
-        "${stem}-mesh-${mesh_revision}-runner-${runner_images_revision}"
+        "${stem}-digest-sha256-${content_digest_hex}"
       ;;
     latest)
       emit_tag --tag "${stem}-latest"

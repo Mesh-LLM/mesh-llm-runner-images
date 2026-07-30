@@ -27,10 +27,6 @@ on:
         description: Expected comma-separated OCI architectures
         type: string
         required: true
-      platform_matrix:
-        description: JSON native-platform matrix
-        type: string
-        required: true
       mesh_revision:
         description: Full MeshLLM source revision
         type: string
@@ -39,13 +35,13 @@ on:
         description: Full runner-images source revision
         type: string
         required: true
-      orchestration_runner:
-        description: Runner label for index assembly
+      execution_mode:
+        description: Validation, candidate staging, or production promotion
         type: string
         required: true
-      publish:
-        description: Push immutable candidate digests
-        type: boolean
+      canary_id:
+        description: Stable cache identity for trusted validation canaries
+        type: string
         required: true
 
 env:
@@ -54,12 +50,93 @@ env:
 jobs:
   build_platform:
     name: ${{ inputs.environment }} ${{ inputs.backend_id }} ${{ matrix.platform_id }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: >-
+      ${{
+        github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+        && github.ref == 'refs/heads/main'
+        && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+        && (
+          github.event_name == 'push'
+          || github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+        )
+        && vars.DEPOT_RUNNERS_ENABLED == 'true'
+        && (
+          matrix.platform_id == 'amd64'
+          && 'depot-ubuntu-24.04-16'
+          || 'depot-ubuntu-24.04-arm-16'
+        )
+        || (
+          matrix.platform_id == 'amd64'
+          && 'ubuntu-24.04'
+          || 'ubuntu-24.04-arm'
+        )
+      }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(inputs.platform_matrix) }}
+      matrix: >-
+        ${{
+          fromJSON(
+            inputs.architectures == 'amd64'
+            && '{"include":[{"platform":"linux/amd64","platform_id":"amd64"}]}'
+            || '{"include":[{"platform":"linux/amd64","platform_id":"amd64"},{"platform":"linux/arm64","platform_id":"arm64"}]}'
+          )
+        }}
     steps:
+      - name: Enforce reusable workflow trust boundary
+        shell: bash
+        env:
+          ARCHITECTURES: ${{ inputs.architectures }}
+          CANARY_ID: ${{ inputs.canary_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXECUTION_MODE: ${{ inputs.execution_mode }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SOURCE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          expected_repository=Mesh-LLM/mesh-llm-runner-images
+          expected_workflow="$expected_repository/.github/workflows/build-and-push.yml@refs/heads/main"
+          [[ "$REPOSITORY" == "$expected_repository" ]] || {
+            echo "reusable workflow rejected repository: $REPOSITORY" >&2
+            exit 1
+          }
+          [[ "$ARCHITECTURES" == amd64 || "$ARCHITECTURES" == amd64,arm64 ]] || {
+            echo "unsupported architecture set: $ARCHITECTURES" >&2
+            exit 1
+          }
+          [[ "$CANARY_ID" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || {
+            echo "invalid canary cache identity: $CANARY_ID" >&2
+            exit 1
+          }
+          case "$EXECUTION_MODE" in
+            validate) ;;
+            stage|promote)
+              [[ "$WORKFLOW_SOURCE_REF" == refs/heads/main ]] || {
+                echo "$EXECUTION_MODE requires refs/heads/main" >&2
+                exit 1
+              }
+              [[ "$WORKFLOW_REF" == "$expected_workflow" ]] || {
+                echo "$EXECUTION_MODE rejected caller workflow: $WORKFLOW_REF" >&2
+                exit 1
+              }
+              case "$EVENT_NAME" in
+                push|schedule|workflow_dispatch) ;;
+                *) echo "$EXECUTION_MODE rejected event: $EVENT_NAME" >&2; exit 1 ;;
+              esac
+              ;;
+            *) echo "unsupported execution mode: $EXECUTION_MODE" >&2; exit 1 ;;
+          esac
+          [[ "$EVENT_NAME" != push || "$EXECUTION_MODE" == stage ]] || {
+            echo "push events may stage candidates but cannot promote aliases" >&2
+            exit 1
+          }
+          [[ "$EVENT_NAME" != schedule || "$EXECUTION_MODE" == promote ]] || {
+            echo "scheduled events must use promote mode" >&2
+            exit 1
+          }
+
       - name: Checkout runner image sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -75,7 +152,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR for candidate staging
-        if: inputs.publish
+        if: inputs.execution_mode != 'validate'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -87,28 +164,42 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          target: ${{ inputs.publish && inputs.environment || format('{0}-test', inputs.environment) }}
+          target: ${{ inputs.execution_mode != 'validate' && inputs.environment || format('{0}-test', inputs.environment) }}
           platforms: ${{ matrix.platform }}
-          outputs: ${{ inputs.publish && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || '' }}
+          outputs: ${{ inputs.execution_mode != 'validate' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || '' }}
           labels: |
             io.mesh-llm.runner.environment=${{ inputs.environment }}
             io.mesh-llm.runner.backend=${{ inputs.backend_id }}
             io.mesh-llm.source.revision=${{ inputs.mesh_revision }}
+            io.mesh-llm.runner-images.revision=${{ inputs.runner_images_revision }}
           build-args: |
             BACKEND=${{ inputs.backend_name }}
             RUNNER_ENVIRONMENT=${{ inputs.environment }}
             MESH_LLM_REVISION=${{ inputs.mesh_revision }}
+            RUNNER_IMAGES_REVISION=${{ inputs.runner_images_revision }}
             CUDA_SERIES=${{ inputs.cuda_series }}
             ROCM_VERSION=${{ inputs.rocm_version }}
           cache-from: |
             type=gha,scope=${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-trusted
-            ${{ !inputs.publish && format('type=gha,scope={0}-{1}-{2}-{3}', inputs.environment, inputs.backend_id, matrix.platform_id, github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('validation-{0}', github.run_id)) || '' }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ inputs.publish && 'trusted' || (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('validation-{0}', github.run_id)) }}
-          provenance: ${{ inputs.publish && 'mode=max' || 'false' }}
-          sbom: ${{ inputs.publish }}
+            ${{ inputs.execution_mode == 'validate' && github.event_name == 'workflow_dispatch' && format('type=gha,scope={0}-{1}-{2}-canary-{3}', inputs.environment, inputs.backend_id, matrix.platform_id, inputs.canary_id) || '' }}
+          cache-to: >-
+            ${{
+              inputs.execution_mode != 'validate'
+              && format('type=gha,mode=max,scope={0}-{1}-{2}-trusted', inputs.environment, inputs.backend_id, matrix.platform_id)
+              || (
+                github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+                && github.ref == 'refs/heads/main'
+                && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+                && github.event_name == 'workflow_dispatch'
+                && format('type=gha,mode=min,scope={0}-{1}-{2}-canary-{3}', inputs.environment, inputs.backend_id, matrix.platform_id, inputs.canary_id)
+                || ''
+              )
+            }}
+          provenance: ${{ inputs.execution_mode != 'validate' && 'mode=max' || 'false' }}
+          sbom: ${{ inputs.execution_mode != 'validate' }}
 
       - name: Capture immutable platform candidate
-        if: inputs.publish
+        if: inputs.execution_mode != 'validate'
         id: candidate
         shell: bash
         env:
@@ -205,7 +296,7 @@ jobs:
           echo "descriptor=$output" >> "$GITHUB_OUTPUT"
 
       - name: Verify exact staged platform digest
-        if: inputs.publish
+        if: inputs.execution_mode != 'validate'
         shell: bash
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -215,6 +306,7 @@ jobs:
           CUDA_SERIES: ${{ inputs.cuda_series }}
           ROCM_VERSION: ${{ inputs.rocm_version }}
           MESH_REVISION: ${{ inputs.mesh_revision }}
+          RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
         run: |
           set -euo pipefail
           docker buildx build \
@@ -224,6 +316,7 @@ jobs:
             --build-arg "EXPECTED_ENVIRONMENT=${ENVIRONMENT}" \
             --build-arg "EXPECTED_BACKEND=${BACKEND_NAME}" \
             --build-arg "EXPECTED_MESH_REVISION=${MESH_REVISION}" \
+            --build-arg "EXPECTED_RUNNER_IMAGES_REVISION=${RUNNER_IMAGES_REVISION}" \
             --build-arg "EXPECTED_CUDA_SERIES=${CUDA_SERIES}" \
             --build-arg "EXPECTED_ROCM_VERSION=${ROCM_VERSION}" \
             --output type=cacheonly \
@@ -231,7 +324,7 @@ jobs:
             .
 
       - name: Upload verified platform candidate
-        if: inputs.publish
+        if: inputs.execution_mode != 'validate'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: candidate-platform-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}
@@ -241,9 +334,22 @@ jobs:
 
   assemble_family_index:
     name: Assemble ${{ inputs.environment }} ${{ inputs.backend_id }} index
-    if: inputs.publish
+    if: inputs.execution_mode != 'validate'
     needs: build_platform
-    runs-on: ${{ inputs.orchestration_runner }}
+    runs-on: >-
+      ${{
+        github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+        && github.ref == 'refs/heads/main'
+        && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+        && (
+          github.event_name == 'push'
+          || github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+        )
+        && vars.DEPOT_RUNNERS_ENABLED == 'true'
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-24.04'
+      }}
     timeout-minutes: 15
     steps:
       - name: Checkout runner image sources
@@ -397,7 +503,7 @@ jobs:
           )"
           [[ "$actual_children" == "$expected_children" ]]
 
-          descriptor=/tmp/candidate-index.json
+          descriptor="/tmp/candidate-index-${ENVIRONMENT}-${BACKEND_ID}.json"
           jq -n \
             --arg image "$IMAGE" \
             --arg environment "$ENVIRONMENT" \

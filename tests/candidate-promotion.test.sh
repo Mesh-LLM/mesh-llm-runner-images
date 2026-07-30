@@ -78,7 +78,7 @@ DOCKER_BIN="$mock_docker" \
     --tag "$image:public-cuda12-sha-222222222222" \
     --tag "$image:public-cuda12-latest" \
     --immutable-tag \
-      "$image:public-cuda12-mesh-$mesh_revision-runner-$runner_images_revision"
+      "$image:public-cuda12-digest-${digest/:/-}"
 
 grep -q '^buildx imagetools inspect .*@sha256' "$promotion_log"
 grep -q '^buildx imagetools create ' "$promotion_log"
@@ -90,13 +90,13 @@ fi
 new_immutable_log="$temporary_directory/new-immutable.log"
 MOCK_DOCKER_LOG="$new_immutable_log" \
 MOCK_DOCKER_SOURCE_DIGEST="$digest" \
-MOCK_DOCKER_MISSING_TAG_PATTERN="-mesh-" \
+MOCK_DOCKER_MISSING_TAG_PATTERN="-digest-sha256-" \
 MOCK_DOCKER_RAW_MANIFEST_FILE="$raw_manifest_fixture" \
 DOCKER_BIN="$mock_docker" \
   bash "$promoter" "${validation_arguments[@]}" \
     --tag "$image:public-cuda12-sha-222222222222" \
     --immutable-tag \
-      "$image:public-cuda12-mesh-$mesh_revision-runner-$runner_images_revision"
+      "$image:public-cuda12-digest-${digest/:/-}"
 grep -q '^buildx imagetools create ' "$new_immutable_log"
 
 immutable_conflict_log="$temporary_directory/immutable-conflict.log"
@@ -109,9 +109,9 @@ expect_failure env \
   bash "$promoter" "${validation_arguments[@]}" \
     --tag "$image:public-cuda12-sha-222222222222" \
     --immutable-tag \
-      "$image:public-cuda12-mesh-$mesh_revision-runner-$runner_images_revision"
+      "$image:public-cuda12-digest-${digest/:/-}"
 if grep -q '^buildx imagetools create ' "$immutable_conflict_log"; then
-  echo "promotion continued after immutable composite tag conflict" >&2
+  echo "promotion continued after immutable content tag conflict" >&2
   exit 1
 fi
 

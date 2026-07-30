@@ -19,6 +19,7 @@ FROM ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da76
 ARG TARGETARCH
 ARG RUNNER_ENVIRONMENT=public
 ARG MESH_LLM_REVISION=unknown
+ARG RUNNER_IMAGES_REVISION=unknown
 ARG NODE_MAJOR=24
 ARG JUST_VERSION=1.57.0
 ARG SCCACHE_VERSION=0.16.0
@@ -28,6 +29,7 @@ LABEL org.opencontainers.image.source="https://github.com/Mesh-LLM/mesh-llm-runn
       org.opencontainers.image.licenses="MIT" \
       io.mesh-llm.runner.environment="${RUNNER_ENVIRONMENT}" \
       io.mesh-llm.source.revision="${MESH_LLM_REVISION}" \
+      io.mesh-llm.runner-images.revision="${RUNNER_IMAGES_REVISION}" \
       io.mesh-llm.runner.gha-convention="true"
 
 # Note: ImageOS, ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT, and
@@ -97,6 +99,7 @@ COPY scripts/verify-runner-image.sh /usr/local/bin/verify-runner-image
 RUN chmod 0755 /usr/local/bin/verify-runner-image \
     && printf '%s\n' "${RUNNER_ENVIRONMENT}" > /etc/mesh-runner-environment \
     && printf '%s\n' "${MESH_LLM_REVISION}" > /etc/mesh-llm-revision \
+    && printf '%s\n' "${RUNNER_IMAGES_REVISION}" > /etc/mesh-runner-images-revision \
     && git lfs install --system
 
 WORKDIR /workspace
@@ -178,6 +181,7 @@ CMD ["/bin/bash"]
 FROM public AS public-test
 ARG BACKEND
 ARG MESH_LLM_REVISION
+ARG RUNNER_IMAGES_REVISION
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
 RUN /usr/local/bin/verify-runner-image \
@@ -186,6 +190,7 @@ RUN /usr/local/bin/verify-runner-image \
       "${MESH_LLM_REVISION}" \
       "${CUDA_SERIES}" \
       "${ROCM_VERSION}" \
+      "${RUNNER_IMAGES_REVISION}" \
     && /__e/node24/bin/node -e 'console.log("node ok")'
 
 FROM selected-backend AS self-hosted
@@ -221,6 +226,7 @@ ENTRYPOINT ["/home/runner/run.sh"]
 FROM self-hosted AS self-hosted-test
 ARG BACKEND
 ARG MESH_LLM_REVISION
+ARG RUNNER_IMAGES_REVISION
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
 RUN /usr/local/bin/verify-runner-image \
@@ -229,4 +235,5 @@ RUN /usr/local/bin/verify-runner-image \
       "${MESH_LLM_REVISION}" \
       "${CUDA_SERIES}" \
       "${ROCM_VERSION}" \
+      "${RUNNER_IMAGES_REVISION}" \
     && /__e/node24/bin/node -e 'console.log("node ok")'
