@@ -201,6 +201,9 @@ if grep -q 'runs-on: depot-ubuntu' "$workflow"; then
   exit 1
 fi
 grep -Fq 'default: validate' "$workflow"
+grep -Fq 'Validate Depot remote builder configuration' "$workflow"
+grep -Fq 'DEPOT_PROJECT_ID repository or organization variable is required' \
+  "$workflow"
 if grep -Eq 'should_publish|inputs\.push' "$workflow"; then
   echo "workflow conflates candidate staging and alias promotion" >&2
   exit 1
@@ -213,15 +216,31 @@ if grep -Eq 'runs-on:.*(inputs|matrix\.runner)' "$reusable_workflow"; then
   echo "caller-controlled input reaches reusable workflow runs-on" >&2
   exit 1
 fi
-[[ "$(grep -F -c "$main_workflow" "$reusable_workflow")" -ge 3 ]]
+[[ "$(grep -F -c "$main_workflow" "$reusable_workflow")" -ge 2 ]]
 grep -Fq "github.repository == '$expected_repository'" "$reusable_workflow"
 grep -Fq "github.ref == 'refs/heads/main'" "$reusable_workflow"
 grep -Fq "vars.DEPOT_RUNNERS_ENABLED == 'true'" "$reusable_workflow"
 grep -Fq "inputs.execution_mode != 'validate'" "$reusable_workflow"
-if grep -Fq "mode=max,scope=\${{ inputs.environment }}" "$reusable_workflow"; then
-  echo "reusable workflow unconditionally exports a maximal cache" >&2
+grep -Fq 'depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461' \
+  "$reusable_workflow"
+grep -Fq 'depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287' \
+  "$reusable_workflow"
+grep -Fq "project: \${{ vars.DEPOT_PROJECT_ID }}" "$reusable_workflow"
+grep -Fq 'DEPOT_PROJECT_ID repository or organization variable is required' \
+  "$reusable_workflow"
+if grep -Eq 'docker/build-push-action|type=gha' "$reusable_workflow"; then
+  echo "reusable workflow bypasses Depot's persistent project cache" >&2
   exit 1
 fi
+grep -Fq 'push-by-digest=true,name-canonical=true,push=true' \
+  "$reusable_workflow"
+grep -Fq "provenance: \${{ inputs.execution_mode != 'validate' && 'mode=max' || 'false' }}" \
+  "$reusable_workflow"
+grep -Fq "sbom: \${{ inputs.execution_mode != 'validate' }}" \
+  "$reusable_workflow"
+grep -Fq 'Set up Docker Buildx for staged digest verification' \
+  "$reusable_workflow"
+[[ "$(grep -F -c 'id-token: write' "$workflow")" -eq 3 ]]
 candidate_tag_pattern="candidate-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}"
 workflow_candidate_tag_count="$(
   grep -F -c "$candidate_tag_pattern" "$workflow"

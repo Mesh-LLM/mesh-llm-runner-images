@@ -114,6 +114,17 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Validate Depot remote builder configuration
+        shell: bash
+        env:
+          DEPOT_PROJECT_ID: ${{ vars.DEPOT_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPOT_PROJECT_ID" ]] || {
+            echo "DEPOT_PROJECT_ID repository or organization variable is required" >&2
+            exit 1
+          }
+
       - name: Install verified actionlint
         run: |
           scripts/install-actionlint.sh "$RUNNER_TEMP/actionlint-bin"
@@ -236,6 +247,7 @@ jobs:
     uses: ./.github/workflows/stage-image-family.yml
     permissions:
       contents: read
+      id-token: write
     with:
       environment: ${{ matrix.environment }}
       backend_id: ${{ matrix.backend_id }}
@@ -265,6 +277,7 @@ jobs:
     uses: ./.github/workflows/stage-image-family.yml
     permissions:
       contents: read
+      id-token: write
       packages: write
     with:
       environment: ${{ matrix.environment }}

@@ -22,7 +22,32 @@ The three execution modes are separate contracts:
 
 Main pushes use `stage`; the weekly default-branch schedule uses `promote`. A feature-branch dispatch cannot stage or promote, and a pull request cannot select a mutation mode.
 
-## Depot rollout gate
+## Depot remote builder
+
+All platform image builds use Depot remote BuildKit, regardless of which
+GitHub Actions runner hosts the orchestration step. Before merging the
+migration:
+
+1. create one Depot container-build project dedicated to this repository;
+2. set the Actions repository or organization variable `DEPOT_PROJECT_ID` to
+   that project ID; and
+3. add OIDC trust relationships for this repository's
+   `build-and-push.yml` and `stage-image-family.yml` workflows.
+
+The called workflow requires a non-empty project ID, and both reusable-workflow
+call sites grant only `contents: read` plus `id-token: write`; staging also has
+the existing `packages: write`. Depot's project cache is automatic, persistent,
+and shared by builds authorized for that project. Public fork pull requests are
+isolated by Depot and receive no project-cache read or write access. Trusted
+staging and promotion authenticate to GHCR locally, then the remote builder
+pushes each immutable platform candidate directly to GHCR. There is no
+`type=gha` cache import or export.
+
+`DEPOT_PROJECT_ID` is configuration, not a credential. OIDC is the
+authorization boundary; do not add a long-lived `DEPOT_TOKEN` unless OIDC is
+unavailable and a separate security review approves the exception.
+
+## Depot runner rollout gate
 
 The policy job always runs on GitHub-hosted `ubuntu-24.04` and emits the tested downstream runner selection. Pull requests always use native GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm`. Trusted calls use Depot only when every condition holds:
 
@@ -46,7 +71,13 @@ The reusable `stage-image-family.yml` workflow must remain on the allowlist beca
 
 As of 2026-07-29, the live repository has no main-branch ruleset or branch protection. Enabling public Depot access remains blocked until main protection, required review for workflow changes, and the selected-workflow runner-group restriction are verified. This document records the blocker; it does not authorize changing repository settings.
 
-Depot Cache does not isolate entries by branch. The main-only provider gate therefore keeps pull-request code out of Depot runners and Depot Cache entirely. Pull requests read trusted GitHub cache entries but do not export BuildKit cache. Trusted main staging owns maximal trusted-cache writes. Manual main validation uses a stable `canary-<canary_id>` scope with `mode=min`, allowing a repeated unchanged dry run without making PR cache content authoritative.
+The runner gate is independent of the remote builder: pull requests remain on
+GitHub-hosted runners, but their Docker builds still execute remotely in Depot.
+Public fork builds use Depot's automatic isolated-build behavior. Authorized
+same-repository builds share the project's persistent BuildKit cache; cache
+reuse is content-addressed and no branch-specific `type=gha` scopes remain.
+The validated `canary_id` is retained as a correlation label in run summaries,
+and two identical main validations provide the cold/warm cache comparison.
 
 ## Tag mutability
 
