@@ -88,6 +88,7 @@ cache-state evidence.
 | Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
 | Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
 | Main staging | [30703143674](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30703143674) | verified warm: expensive build layers reused across the matrix | 11m 03s | 2h 25m 34s | 1h 43m 26s | 74.0% | 25.0% |
+| Main staging, remote verification | [30703744077](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30703744077) | verified warm: all 20 primary rows logged cached steps | 6m 55s | 1h 19m 28s | 1h 06m 49s | 83.7% | 59.1% |
 
 The transition run's median and p95 Depot durations were 2m 34s and 3m 20s;
 the verified-warm run reduced them to 6.5s and 44s. All 20 warm rows logged
@@ -99,10 +100,19 @@ The first main staging run completed all 20 platform builds and all 35 executed
 jobs successfully. Its median and p95 Depot durations were 5m 41s and 6m 25s,
 with a 6m 26s slowest build. Direct GHCR pushes, SBOM, and provenance remained
 enabled. Exact-digest verification still downloaded candidate layers to each
-GitHub runner, accounting for much of the remaining orchestration overhead;
-the follow-up routes that unchanged verification Dockerfile through Depot as
-well. This run removed all external cache export but did not meet the 33.3%
+GitHub runner, accounting for much of the remaining orchestration overhead; a
+follow-up routed that unchanged verification Dockerfile through Depot as well.
+This run removed all external cache export but did not meet the 33.3%
 aggregate-job target, so it is retained as an intermediate rollout result.
+
+The remote-verification run again completed all 35 jobs and 20 platform builds.
+Its primary-build median, p95, and slowest Depot durations were 4m 03s, 4m 49s,
+and 4m 57s. Exact-digest verification fell from 28m 50s aggregate, 72s median,
+and 2m 27s p95 to 2m 37s aggregate, 8s median, and 10s p95, a 90.9% aggregate
+reduction. Compared with the pre-Depot main-staging control, primary build work
+fell 62.7%, wall time fell 83.7%, and aggregate job time fell 59.1%. Direct GHCR
+pushes, SBOM, provenance, immutable-digest verification, and every index
+assembly remained enabled.
 
 The migration pull request selected only the public CPU AMD64 contract row, so
 it is not compared with the 20-platform PR control. It does provide a measured
