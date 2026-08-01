@@ -87,13 +87,22 @@ cache-state evidence.
 | 20-platform PR validation | [30702259904 attempt 2](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30702259904/attempts/2) | verified warm: every row logged cached steps | 5m 21s | 9m 49s | 5m 13s | 16.0% | 86.6% |
 | Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
 | Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
-| Main staging | Pending rollout | verify before labeling | — | — | — | — | — |
+| Main staging | [30703143674](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30703143674) | verified warm: expensive build layers reused across the matrix | 11m 03s | 2h 25m 34s | 1h 43m 26s | 74.0% | 25.0% |
 
 The transition run's median and p95 Depot durations were 2m 34s and 3m 20s;
 the verified-warm run reduced them to 6.5s and 44s. All 20 warm rows logged
 BuildKit `CACHED` steps. GitHub-hosted runner queueing dominated its wall-time
 tail: the slowest row waited 3m 58s for a runner and aggregate queue time was
 29m 54s. Queue time is not included in aggregate job duration.
+
+The first main staging run completed all 20 platform builds and all 35 executed
+jobs successfully. Its median and p95 Depot durations were 5m 41s and 6m 25s,
+with a 6m 26s slowest build. Direct GHCR pushes, SBOM, and provenance remained
+enabled. Exact-digest verification still downloaded candidate layers to each
+GitHub runner, accounting for much of the remaining orchestration overhead;
+the follow-up routes that unchanged verification Dockerfile through Depot as
+well. This run removed all external cache export but did not meet the 33.3%
+aggregate-job target, so it is retained as an intermediate rollout result.
 
 The migration pull request selected only the public CPU AMD64 contract row, so
 it is not compared with the 20-platform PR control. It does provide a measured
