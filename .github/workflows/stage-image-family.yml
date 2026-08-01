@@ -73,6 +73,8 @@ jobs:
         )
       }}
     timeout-minutes: 60
+    env:
+      DEPOT_PROJECT_ID: mzm95zcv7p
     strategy:
       fail-fast: false
       matrix: >-
@@ -89,7 +91,6 @@ jobs:
         env:
           ARCHITECTURES: ${{ inputs.architectures }}
           CANARY_ID: ${{ inputs.canary_id }}
-          DEPOT_PROJECT_ID: ${{ vars.DEPOT_PROJECT_ID }}
           EVENT_NAME: ${{ github.event_name }}
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           REPOSITORY: ${{ github.repository }}
@@ -111,8 +112,8 @@ jobs:
             echo "invalid canary cache identity: $CANARY_ID" >&2
             exit 1
           }
-          [[ -n "$DEPOT_PROJECT_ID" ]] || {
-            echo "DEPOT_PROJECT_ID repository or organization variable is required" >&2
+          [[ "$DEPOT_PROJECT_ID" == mzm95zcv7p ]] || {
+            echo "unexpected checked-in Depot project ID: $DEPOT_PROJECT_ID" >&2
             exit 1
           }
           case "$EXECUTION_MODE" in
@@ -175,7 +176,7 @@ jobs:
         id: build
         uses: depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287 # v1
         with:
-          project: ${{ vars.DEPOT_PROJECT_ID }}
+          project: ${{ env.DEPOT_PROJECT_ID }}
           context: .
           target: ${{ inputs.execution_mode != 'validate' && inputs.environment || format('{0}-test', inputs.environment) }}
           platforms: ${{ matrix.platform }}
@@ -196,16 +197,19 @@ jobs:
           sbom: ${{ inputs.execution_mode != 'validate' }}
 
       - name: Record Depot build metrics
+        id: build_metrics
         if: always()
         shell: bash
         env:
           BUILD_ID: ${{ steps.build.outputs.build-id }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           CANARY_ID: ${{ inputs.canary_id }}
-          DEPOT_PROJECT_ID: ${{ steps.build.outputs.project-id }}
-          EXPECTED_DEPOT_PROJECT_ID: ${{ vars.DEPOT_PROJECT_ID }}
+          ACTUAL_DEPOT_PROJECT_ID: ${{ steps.build.outputs.project-id }}
+          BACKEND_ID: ${{ inputs.backend_id }}
+          ENVIRONMENT: ${{ inputs.environment }}
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           PLATFORM: ${{ matrix.platform }}
+          PLATFORM_ID: ${{ matrix.platform_id }}
           STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
         run: |
           set -euo pipefail
@@ -216,12 +220,43 @@ jobs:
           fi
           if [[ "$BUILD_OUTCOME" == success ]]; then
             [[ -n "$BUILD_ID" ]]
-            [[ "$DEPOT_PROJECT_ID" == "$EXPECTED_DEPOT_PROJECT_ID" ]]
+            [[ "$ACTUAL_DEPOT_PROJECT_ID" == "$DEPOT_PROJECT_ID" ]]
           fi
+          metrics_file="$RUNNER_TEMP/depot-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${PLATFORM//\//-}.json"
+          jq -n \
+            --arg build_id "$BUILD_ID" \
+            --arg project_id "$ACTUAL_DEPOT_PROJECT_ID" \
+            --arg environment "$ENVIRONMENT" \
+            --arg backend_id "$BACKEND_ID" \
+            --arg platform "$PLATFORM" \
+            --arg platform_id "$PLATFORM_ID" \
+            --arg mode "$EXECUTION_MODE" \
+            --arg outcome "$BUILD_OUTCOME" \
+            --arg canary_id "$CANARY_ID" \
+            --arg github_run_id "$GITHUB_RUN_ID" \
+            --arg github_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson action_elapsed_seconds \
+              "$(if [[ "$elapsed_seconds" == unavailable ]]; then echo null; else echo "$elapsed_seconds"; fi)" \
+            '{
+              schema: 1,
+              build_id: $build_id,
+              project_id: $project_id,
+              environment: $environment,
+              backend_id: $backend_id,
+              platform: $platform,
+              platform_id: $platform_id,
+              mode: $mode,
+              outcome: $outcome,
+              canary_id: $canary_id,
+              github_run_id: $github_run_id,
+              github_run_attempt: $github_run_attempt,
+              action_elapsed_seconds: $action_elapsed_seconds
+            }' > "$metrics_file"
+          echo "metrics_file=$metrics_file" >> "$GITHUB_OUTPUT"
           {
             echo "## Depot container build"
             echo
-            echo "- Project: \`${DEPOT_PROJECT_ID:-unavailable}\`"
+            echo "- Project: \`${ACTUAL_DEPOT_PROJECT_ID:-unavailable}\`"
             echo "- Build: \`${BUILD_ID:-unavailable}\`"
             echo "- Platform: \`$PLATFORM\`"
             echo "- Mode: \`$EXECUTION_MODE\`"
@@ -229,6 +264,15 @@ jobs:
             echo "- Outcome: \`${BUILD_OUTCOME:-unavailable}\`"
             echo "- Elapsed: ${elapsed_seconds}s"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Depot build record
+        if: always() && steps.build_metrics.outputs.metrics_file != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: depot-build-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}
+          path: ${{ steps.build_metrics.outputs.metrics_file }}
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Set up Docker Buildx for staged digest verification
         if: inputs.execution_mode != 'validate'

@@ -28,13 +28,12 @@ All platform image builds use Depot remote BuildKit, regardless of which
 GitHub Actions runner hosts the orchestration step. Before merging the
 migration:
 
-1. create one Depot container-build project dedicated to this repository;
-2. set the Actions repository or organization variable `DEPOT_PROJECT_ID` to
-   that project ID; and
-3. add OIDC trust relationships for this repository's
+1. use the dedicated Depot project `mzm95zcv7p` configured in the checked-in
+   workflows; and
+2. add OIDC trust relationships for this repository's
    `build-and-push.yml` and `stage-image-family.yml` workflows.
 
-The called workflow requires a non-empty project ID, and both reusable-workflow
+The called workflow requires that exact checked-in project ID, and both reusable-workflow
 call sites grant only `contents: read` plus `id-token: write`; staging also has
 the existing `packages: write`. Depot's project cache is automatic, persistent,
 and shared by builds authorized for that project. Public fork pull requests are
@@ -43,7 +42,7 @@ staging and promotion authenticate to GHCR locally, then the remote builder
 pushes each immutable platform candidate directly to GHCR. There is no
 `type=gha` cache import or export.
 
-`DEPOT_PROJECT_ID` is configuration, not a credential. OIDC is the
+The checked-in project ID is configuration, not a credential. OIDC is the
 authorization boundary; do not add a long-lived `DEPOT_TOKEN` unless OIDC is
 unavailable and a separate security review approves the exception.
 
@@ -77,7 +76,11 @@ Public fork builds use Depot's automatic isolated-build behavior. Authorized
 same-repository builds share the project's persistent BuildKit cache; cache
 reuse is content-addressed and no branch-specific `type=gha` scopes remain.
 The validated `canary_id` is retained as a correlation label in run summaries,
-and two identical main validations provide the cold/warm cache comparison.
+but sequence does not establish cache state. A validation may be labeled cold
+only when the Depot project is new or empty immediately beforehand, or when
+independent Depot evidence confirms that relevant cache is unavailable. A run
+may be labeled warm only when the Depot dashboard or BuildKit logs prove reuse
+of the relevant layers.
 
 ## Tag mutability
 

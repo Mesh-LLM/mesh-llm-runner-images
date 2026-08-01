@@ -43,6 +43,8 @@ jobs:
     name: Workflow and candidate policy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      DEPOT_PROJECT_ID: mzm95zcv7p
     outputs:
       execution_mode: ${{ steps.mode.outputs.execution_mode }}
       orchestration_runner: ${{ steps.runners.outputs.orchestration_runner }}
@@ -116,12 +118,10 @@ jobs:
 
       - name: Validate Depot remote builder configuration
         shell: bash
-        env:
-          DEPOT_PROJECT_ID: ${{ vars.DEPOT_PROJECT_ID }}
         run: |
           set -euo pipefail
-          [[ -n "$DEPOT_PROJECT_ID" ]] || {
-            echo "DEPOT_PROJECT_ID repository or organization variable is required" >&2
+          [[ "$DEPOT_PROJECT_ID" == mzm95zcv7p ]] || {
+            echo "unexpected checked-in Depot project ID: $DEPOT_PROJECT_ID" >&2
             exit 1
           }
 

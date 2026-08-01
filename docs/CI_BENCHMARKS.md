@@ -47,7 +47,7 @@ reduction.
 
 | Event | Run | Wall time | Executed jobs | Aggregate job time | Aggregate image-build steps |
 |---|---|---:|---:|---:|---:|
-| Exhaustive PR | [30504335079](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30504335079) | 6m 22s | 22 | 1h 13m 07s | 1h 06m 19s |
+| 20-platform PR | [30504335079](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30504335079) | 6m 22s | 22 | 1h 13m 07s | 1h 06m 19s |
 | Main staging | [30522118156](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30522118156) | 42m 30s | 35 | 3h 14m 13s | 2h 58m 59s |
 
 The main staging logs contain 20 `type=gha` cache exports totaling 1h 04m 44s.
@@ -68,21 +68,27 @@ builder to GHCR. Depot documents these behaviors in its
 [GitHub Actions integration](https://depot.dev/docs/container-builds/integrations/github-actions),
 and [cache overview](https://depot.dev/docs/cache/overview).
 
-Every matrix row writes the Depot project ID, build ID, result, platform, mode,
-and end-to-end action duration to the GitHub step summary. The build ID is the
-join key for Depot's cache-hit and CPU, memory, and step-level metrics.
+Every matrix row uploads a machine-readable record containing the Depot project
+and build IDs, result, platform, mode, and action duration. The build ID joins
+that record to `depot list builds`, whose duration is the authoritative Depot
+build duration. GitHub action duration remains orchestration-overhead evidence,
+not a substitute for the Depot build record.
 
-Populate this table only with successful runs from the migration commit. Use
-the second identical validation as the warm-cache result; never compare a warm
-Depot run only against a cold control.
+Populate this table only with successful runs from the migration commit and a
+verified cache-state classification. Label a run cold only when the project was
+new or empty immediately before it, or when independent Depot evidence proves
+no relevant cache was available. Label a run warm only when Depot evidence or
+BuildKit logs prove the relevant layers were reused. Sequence alone is not
+cache-state evidence.
 
 | Event | Run | Cache state | Wall time | Aggregate job time | Aggregate Depot build time | Net wall improvement | Net aggregate improvement |
 |---|---|---|---:|---:|---:|---:|---:|
-| Main validation | Pending rollout | cold | — | — | — | — | — |
-| Main validation | Pending rollout | warm | — | — | — | — | — |
-| Main staging | Pending rollout | warm | — | — | — | — | — |
+| Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
+| Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
+| Main staging | Pending rollout | verify before labeling | — | — | — | — | — |
 
-Use the GitHub API timestamps, not rounded UI labels. For a run ID:
+Use GitHub API timestamps for workflow and aggregate job time. Do not use the
+GitHub action step as Depot build time:
 
 ```bash
 run_id=RUN_ID
@@ -96,25 +102,66 @@ gh run view "$run_id" --json createdAt,updatedAt,jobs | jq '
       aggregate_job_seconds:
         ([$jobs[]
           | ((.completedAt | fromdateiso8601) - (.startedAt | fromdateiso8601))]
-          | add),
-      aggregate_build_seconds:
-        ([$jobs[].steps[]
-          | select(.name == "Build platform image once")
-          | ((.completedAt | fromdateiso8601) - (.startedAt | fromdateiso8601))]
-          | add),
-      slowest_build_seconds:
-        ([$jobs[].steps[]
-          | select(.name == "Build platform image once")
-          | ((.completedAt | fromdateiso8601) - (.startedAt | fromdateiso8601))]
-          | max)
+          | add)
     }
 '
 ```
 
-Calculate improvement as `(control - Depot) / control * 100`. Compare the
-exhaustive PR to run `30504335079` and main staging to run `30522118156`.
-Report median and p95 platform-build time in addition to totals so one fast
-family cannot hide a CUDA or ROCm regression.
+Join the uploaded row records to Depot's machine-readable build list and emit
+aggregate, median, p95, and slowest Depot duration:
+
+```bash
+run_id=RUN_ID
+metrics_dir="$(mktemp -d)"
+gh run download "$run_id" --pattern 'depot-build-*' --dir "$metrics_dir"
+find "$metrics_dir" -type f -name '*.json' -print0 \
+  | xargs -0 jq -s '.' > "$metrics_dir/rows.json"
+depot list builds --project mzm95zcv7p --output json \
+  > "$metrics_dir/depot-builds.json"
+jq --slurpfile depot "$metrics_dir/depot-builds.json" '
+  def median:
+    sort as $values
+    | ($values | length) as $count
+    | if $count == 0 then null
+      elif $count % 2 == 1 then $values[($count / 2 | floor)]
+      else (($values[$count / 2 - 1] + $values[$count / 2]) / 2)
+      end;
+  def p95:
+    sort as $values
+    | ($values | length) as $count
+    | if $count == 0 then null
+      else $values[(($count * 0.95 | ceil) - 1)]
+      end;
+  ($depot[0] | INDEX(.id)) as $depot_by_id
+  | map(. + {depot: $depot_by_id[.build_id]})
+  | if any(.[]; .depot == null) then error("missing Depot build record") else . end
+  | . as $builds
+  | ($builds | map(.depot.duration)) as $durations
+  | {
+      schema: 1,
+      github_run_id: $builds[0].github_run_id,
+      project_id: $builds[0].project_id,
+      build_count: ($builds | length),
+      aggregate_depot_build_seconds: ($durations | add),
+      median_depot_build_seconds: ($durations | median),
+      p95_depot_build_seconds: ($durations | p95),
+      slowest_depot_build_seconds: ($durations | max),
+      builds: $builds
+    }
+' "$metrics_dir/rows.json"
+```
+
+Depot CLI 2.101.77 exposes container-build ID, status, start time, and duration.
+It does not expose container-build retry count, cache-hit rate, CPU, or memory,
+so those unsupported fields are deliberately absent from the machine-readable
+report. Use the Depot dashboard or BuildKit logs only as separately recorded
+cache-state or tuning evidence.
+
+Calculate improvement as `(control - Depot) / control * 100`. Compare a Depot
+pull request to run `30504335079` only when it also selects all 20 platforms;
+otherwise establish a pre-Depot control with the same selected matrix. Compare
+main staging to run `30522118156`. Report median and p95 platform-build time in
+addition to totals so one fast family cannot hide a CUDA or ROCm regression.
 
 ## Depot rollout and no-regression protocol
 
@@ -122,11 +169,11 @@ For the first gated pull request, trusted validation canary, and staged publish
 after enabling Depot:
 
 1. Record run wall time, aggregate job time, queue time, and the slowest matrix
-   row. Also record aggregate, median, and p95 Depot build duration, cache-hit
-   rate, and failed/retried build count.
+   row. Also record aggregate, median, and p95 Depot build duration from build
+   records joined by build ID.
 2. Dispatch `operation=validate` twice from `refs/heads/main` with the same
-   lowercase `canary_id`; use the first as cold-cache evidence and the second as
-   warm-cache evidence from the same Depot project.
+   lowercase `canary_id`. Classify either run as cold or warm only with the
+   empty/new-project condition or independent cache-state evidence above.
 3. Confirm the pull request selects only affected families plus the public CPU
    AMD64 contract row. For a public fork, confirm Depot marks builds isolated
    and gives them no project-cache read or write access.
@@ -148,8 +195,8 @@ after enabling Depot:
    family index, compatibility index, tag, or verification step differs from
    the control contract. Performance never overrides a functional regression.
 
-The first targets are a warm exhaustive validation under 6m 22s, main staging
+The first targets are a verified-warm exhaustive validation under 6m 22s, main staging
 under 42m 30s, at least 33.3% less aggregate main job time, and zero external
-cache-export time. After three warm runs, resize or autoscale Depot builders
-only when p95 CPU or memory saturation coincides with slow uncached steps;
+cache-export time. After three verified-warm runs, resize or autoscale Depot
+builders only when independent Depot resource evidence identifies saturation;
 otherwise preserve the current sizing and let cache reuse drive the gain.

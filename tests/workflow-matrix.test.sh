@@ -17,6 +17,30 @@ expect_failure() {
   fi
 }
 
+extract_job_block() {
+  local workflow_file="$1"
+  local job_name="$2"
+  local output_file="$3"
+  awk -v header="  ${job_name}:" '
+    $0 == header { printing = 1 }
+    printing && $0 ~ /^  [[:alnum:]_]+:$/ && $0 != header { exit }
+    printing { print }
+  ' "$workflow_file" > "$output_file"
+  [[ -s "$output_file" ]]
+}
+
+extract_step_block() {
+  local job_file="$1"
+  local step_name="$2"
+  local output_file="$3"
+  awk -v header="      - name: ${step_name}" '
+    $0 == header { printing = 1 }
+    printing && /^      - name:/ && $0 != header { exit }
+    printing { print }
+  ' "$job_file" > "$output_file"
+  [[ -s "$output_file" ]]
+}
+
 assert_selection() {
   local event_name="$1"
   local github_ref="$2"
@@ -193,6 +217,23 @@ assert_pr_plan Dockerfile 12 '.selection.exhaustive == true'
 
 workflow="$repository_root/.github/workflows/build-and-push.yml"
 reusable_workflow="$repository_root/.github/workflows/stage-image-family.yml"
+policy_job="$temporary_directory/policy-job.yml"
+validate_families_job="$temporary_directory/validate-families-job.yml"
+stage_families_job="$temporary_directory/stage-families-job.yml"
+build_platform_job="$temporary_directory/build-platform-job.yml"
+depot_config_step="$temporary_directory/depot-config-step.yml"
+trust_boundary_step="$temporary_directory/trust-boundary-step.yml"
+depot_build_step="$temporary_directory/depot-build-step.yml"
+extract_job_block "$workflow" policy "$policy_job"
+extract_job_block "$workflow" validate_families "$validate_families_job"
+extract_job_block "$workflow" stage_families "$stage_families_job"
+extract_job_block "$reusable_workflow" build_platform "$build_platform_job"
+extract_step_block "$policy_job" \
+  'Validate Depot remote builder configuration' "$depot_config_step"
+extract_step_block "$build_platform_job" \
+  'Enforce reusable workflow trust boundary' "$trust_boundary_step"
+extract_step_block "$build_platform_job" \
+  'Build platform image once' "$depot_build_step"
 [[ "$(grep -c 'vars\.DEPOT_RUNNERS_ENABLED' "$workflow")" -eq 1 ]]
 [[ "$(grep -F -c 'runs-on: ubuntu-24.04' "$workflow")" -eq 1 ]]
 grep -Fq "runs-on: \${{ needs.policy.outputs.orchestration_runner }}" "$workflow"
@@ -201,9 +242,9 @@ if grep -q 'runs-on: depot-ubuntu' "$workflow"; then
   exit 1
 fi
 grep -Fq 'default: validate' "$workflow"
-grep -Fq 'Validate Depot remote builder configuration' "$workflow"
-grep -Fq 'DEPOT_PROJECT_ID repository or organization variable is required' \
-  "$workflow"
+grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$policy_job"
+grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$depot_config_step"
+grep -Fq 'unexpected checked-in Depot project ID' "$depot_config_step"
 if grep -Eq 'should_publish|inputs\.push' "$workflow"; then
   echo "workflow conflates candidate staging and alias promotion" >&2
   exit 1
@@ -221,26 +262,31 @@ grep -Fq "github.repository == '$expected_repository'" "$reusable_workflow"
 grep -Fq "github.ref == 'refs/heads/main'" "$reusable_workflow"
 grep -Fq "vars.DEPOT_RUNNERS_ENABLED == 'true'" "$reusable_workflow"
 grep -Fq "inputs.execution_mode != 'validate'" "$reusable_workflow"
+grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$build_platform_job"
+grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$trust_boundary_step"
 grep -Fq 'depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461' \
-  "$reusable_workflow"
+  "$build_platform_job"
 grep -Fq 'depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287' \
-  "$reusable_workflow"
-grep -Fq "project: \${{ vars.DEPOT_PROJECT_ID }}" "$reusable_workflow"
-grep -Fq 'DEPOT_PROJECT_ID repository or organization variable is required' \
-  "$reusable_workflow"
-if grep -Eq 'docker/build-push-action|type=gha' "$reusable_workflow"; then
+  "$depot_build_step"
+grep -Fq "project: \${{ env.DEPOT_PROJECT_ID }}" "$depot_build_step"
+if grep -Eq 'docker/build-push-action|type=gha' "$depot_build_step"; then
   echo "reusable workflow bypasses Depot's persistent project cache" >&2
   exit 1
 fi
 grep -Fq 'push-by-digest=true,name-canonical=true,push=true' \
-  "$reusable_workflow"
+  "$depot_build_step"
 grep -Fq "provenance: \${{ inputs.execution_mode != 'validate' && 'mode=max' || 'false' }}" \
-  "$reusable_workflow"
+  "$depot_build_step"
 grep -Fq "sbom: \${{ inputs.execution_mode != 'validate' }}" \
-  "$reusable_workflow"
+  "$depot_build_step"
 grep -Fq 'Set up Docker Buildx for staged digest verification' \
   "$reusable_workflow"
-[[ "$(grep -F -c 'id-token: write' "$workflow")" -eq 3 ]]
+grep -Fq 'Upload Depot build record' "$build_platform_job"
+grep -Fxq '      contents: read' "$validate_families_job"
+grep -Fxq '      id-token: write' "$validate_families_job"
+grep -Fxq '      contents: read' "$stage_families_job"
+grep -Fxq '      id-token: write' "$stage_families_job"
+grep -Fxq '      packages: write' "$stage_families_job"
 candidate_tag_pattern="candidate-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}"
 workflow_candidate_tag_count="$(
   grep -F -c "$candidate_tag_pattern" "$workflow"

@@ -73,8 +73,8 @@ Depot remote BuildKit and its persistent project-scoped cache; no job imports
 or exports `type=gha` cache archives. Public fork builds are isolated from the
 project cache by Depot. Trusted staging and promotion push immutable platform
 digests directly from the remote builder to GHCR, while GHCR remains the
-canonical registry. The required `DEPOT_PROJECT_ID` configuration and OIDC
-trust setup are documented in `docs/OPERATIONS.md`.
+canonical registry. The checked-in Depot project configuration and required
+OIDC trust setup are documented in `docs/OPERATIONS.md`.
 
 Supported environments, backends, architectures, compatibility aliases, and extra indexes are declared in `config/runner-image-families.json`; `scripts/generate-workflow-matrices.sh` validates that descriptor and generates both build and promotion matrices.
 
