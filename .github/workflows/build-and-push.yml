@@ -43,6 +43,8 @@ jobs:
     name: Workflow and candidate policy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      DEPOT_PROJECT_ID: mzm95zcv7p
     outputs:
       execution_mode: ${{ steps.mode.outputs.execution_mode }}
       orchestration_runner: ${{ steps.runners.outputs.orchestration_runner }}
@@ -113,6 +115,15 @@ jobs:
             jq . <<< "$selection"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate Depot remote builder configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPOT_PROJECT_ID" == mzm95zcv7p ]] || {
+            echo "unexpected checked-in Depot project ID: $DEPOT_PROJECT_ID" >&2
+            exit 1
+          }
 
       - name: Install verified actionlint
         run: |
@@ -236,6 +247,7 @@ jobs:
     uses: ./.github/workflows/stage-image-family.yml
     permissions:
       contents: read
+      id-token: write
     with:
       environment: ${{ matrix.environment }}
       backend_id: ${{ matrix.backend_id }}
@@ -265,6 +277,7 @@ jobs:
     uses: ./.github/workflows/stage-image-family.yml
     permissions:
       contents: read
+      id-token: write
       packages: write
     with:
       environment: ${{ matrix.environment }}

@@ -67,7 +67,14 @@ Use target `self-hosted` and `RUNNER_ENVIRONMENT=self-hosted` for an image that 
 
 Execution is explicit: `validate` builds test targets without registry writes, `stage` pushes and verifies run-scoped candidates without moving production aliases, and `promote` performs the same staging before versioned and eventual-`latest` reconciliation. Manual dispatch defaults to `validate`; any staging or promotion requires the exact repository, `refs/heads/main`, and the default-branch caller workflow. Main pushes stage candidates, while the weekly schedule performs the deliberate production promotion.
 
-Pull requests receive no package-write permission and never export maximal BuildKit caches. They read trusted cache entries and run only affected families plus the public CPU AMD64 contract row. Trusted main staging owns `mode=max` cache population. A repeated trusted validation canary uses the stable, validated `canary_id` scope with `mode=min`.
+Pull requests receive no package-write permission and run only affected
+families plus the public CPU AMD64 contract row. Every platform build uses
+Depot remote BuildKit and its persistent project-scoped cache; no job imports
+or exports `type=gha` cache archives. Public fork builds are isolated from the
+project cache by Depot. Trusted staging and promotion push immutable platform
+digests directly from the remote builder to GHCR, while GHCR remains the
+canonical registry. The checked-in Depot project configuration and required
+OIDC trust setup are documented in `docs/OPERATIONS.md`.
 
 Supported environments, backends, architectures, compatibility aliases, and extra indexes are declared in `config/runner-image-families.json`; `scripts/generate-workflow-matrices.sh` validates that descriptor and generates both build and promotion matrices.
 
@@ -75,7 +82,10 @@ Pull requests always use native GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-a
 
 The weekly default-branch publication is intentionally Depot-eligible when that gate is enabled: it is a trusted, high-value full image rebuild. Scheduled runs on any other ref remain GitHub-hosted.
 
-This gate keeps untrusted pull requests out of Depot Cache, which is repository-scoped but not branch-isolated. GitHub-hosted pull requests are read-only cache consumers; trusted main staging writes the Depot-backed trusted scope.
+The runner gate is independent of container builds: GitHub-hosted pull-request
+runners still dispatch Docker builds to Depot. Depot isolates public fork
+builds from the project cache, while authorized same-repository builds share
+the persistent content-addressed cache.
 
 Published tags are:
 
