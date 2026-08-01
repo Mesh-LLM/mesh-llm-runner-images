@@ -274,10 +274,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Set up Docker Buildx for staged digest verification
-        if: inputs.execution_mode != 'validate'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
-
       - name: Capture immutable platform candidate
         if: inputs.execution_mode != 'validate'
         id: candidate
@@ -389,7 +385,8 @@ jobs:
           RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
         run: |
           set -euo pipefail
-          docker buildx build \
+          depot build \
+            --project "$DEPOT_PROJECT_ID" \
             --file Dockerfile.verify \
             --platform "$PLATFORM" \
             --build-arg "CANDIDATE_IMAGE=${IMAGE}@${DIGEST}" \

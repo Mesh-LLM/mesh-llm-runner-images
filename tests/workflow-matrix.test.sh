@@ -224,6 +224,7 @@ build_platform_job="$temporary_directory/build-platform-job.yml"
 depot_config_step="$temporary_directory/depot-config-step.yml"
 trust_boundary_step="$temporary_directory/trust-boundary-step.yml"
 depot_build_step="$temporary_directory/depot-build-step.yml"
+staged_digest_verification_step="$temporary_directory/staged-digest-verification-step.yml"
 extract_job_block "$workflow" policy "$policy_job"
 extract_job_block "$workflow" validate_families "$validate_families_job"
 extract_job_block "$workflow" stage_families "$stage_families_job"
@@ -234,6 +235,8 @@ extract_step_block "$build_platform_job" \
   'Enforce reusable workflow trust boundary' "$trust_boundary_step"
 extract_step_block "$build_platform_job" \
   'Build platform image once' "$depot_build_step"
+extract_step_block "$build_platform_job" \
+  'Verify exact staged platform digest' "$staged_digest_verification_step"
 [[ "$(grep -c 'vars\.DEPOT_RUNNERS_ENABLED' "$workflow")" -eq 1 ]]
 [[ "$(grep -F -c 'runs-on: ubuntu-24.04' "$workflow")" -eq 1 ]]
 grep -Fq "runs-on: \${{ needs.policy.outputs.orchestration_runner }}" "$workflow"
@@ -279,8 +282,13 @@ grep -Fq "provenance: \${{ inputs.execution_mode != 'validate' && 'mode=max' || 
   "$depot_build_step"
 grep -Fq "sbom: \${{ inputs.execution_mode != 'validate' }}" \
   "$depot_build_step"
-grep -Fq 'Set up Docker Buildx for staged digest verification' \
-  "$reusable_workflow"
+grep -Fq "depot build \\" "$staged_digest_verification_step"
+grep -Fq -- "--project \"\$DEPOT_PROJECT_ID\"" \
+  "$staged_digest_verification_step"
+if grep -Fq 'docker buildx build' "$staged_digest_verification_step"; then
+  echo "staged digest verification downloads image layers to the GitHub runner" >&2
+  exit 1
+fi
 grep -Fq 'Upload Depot build record' "$build_platform_job"
 grep -Fxq '      contents: read' "$validate_families_job"
 grep -Fxq '      id-token: write' "$validate_families_job"
