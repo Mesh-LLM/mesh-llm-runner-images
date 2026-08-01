@@ -83,9 +83,17 @@ cache-state evidence.
 
 | Event | Run | Cache state | Wall time | Aggregate job time | Aggregate Depot build time | Net wall improvement | Net aggregate improvement |
 |---|---|---|---:|---:|---:|---:|---:|
+| 20-platform PR validation | [30702259904 attempt 1](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30702259904/attempts/1) | mixed: one-time cache-layout transition | 4m 10s | 56m 49s | 52m 30s | 34.6% | 22.3% |
+| 20-platform PR validation | [30702259904 attempt 2](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30702259904/attempts/2) | verified warm: every row logged cached steps | 5m 21s | 9m 49s | 5m 13s | 16.0% | 86.6% |
 | Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
 | Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
 | Main staging | Pending rollout | verify before labeling | — | — | — | — | — |
+
+The transition run's median and p95 Depot durations were 2m 34s and 3m 20s;
+the verified-warm run reduced them to 6.5s and 44s. All 20 warm rows logged
+BuildKit `CACHED` steps. GitHub-hosted runner queueing dominated its wall-time
+tail: the slowest row waited 3m 58s for a runner and aggregate queue time was
+29m 54s. Queue time is not included in aggregate job duration.
 
 The migration pull request selected only the public CPU AMD64 contract row, so
 it is not compared with the 20-platform PR control. It does provide a measured
