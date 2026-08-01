@@ -18,8 +18,6 @@ FROM ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da76
 
 ARG TARGETARCH
 ARG RUNNER_ENVIRONMENT=public
-ARG MESH_LLM_REVISION=unknown
-ARG RUNNER_IMAGES_REVISION=unknown
 ARG NODE_MAJOR=24
 ARG JUST_VERSION=1.57.0
 ARG SCCACHE_VERSION=0.16.0
@@ -28,8 +26,6 @@ LABEL org.opencontainers.image.source="https://github.com/Mesh-LLM/mesh-llm-runn
       org.opencontainers.image.description="Reproducible multi-architecture MeshLLM CI environment" \
       org.opencontainers.image.licenses="MIT" \
       io.mesh-llm.runner.environment="${RUNNER_ENVIRONMENT}" \
-      io.mesh-llm.source.revision="${MESH_LLM_REVISION}" \
-      io.mesh-llm.runner-images.revision="${RUNNER_IMAGES_REVISION}" \
       io.mesh-llm.runner.gha-convention="true"
 
 # Note: ImageOS, ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT, and
@@ -97,9 +93,6 @@ RUN chmod 0755 /usr/local/bin/warm-dependencies \
 
 COPY scripts/verify-runner-image.sh /usr/local/bin/verify-runner-image
 RUN chmod 0755 /usr/local/bin/verify-runner-image \
-    && printf '%s\n' "${RUNNER_ENVIRONMENT}" > /etc/mesh-runner-environment \
-    && printf '%s\n' "${MESH_LLM_REVISION}" > /etc/mesh-llm-revision \
-    && printf '%s\n' "${RUNNER_IMAGES_REVISION}" > /etc/mesh-runner-images-revision \
     && git lfs install --system
 
 WORKDIR /workspace
@@ -164,7 +157,14 @@ USER runner
 
 FROM selected-backend AS public
 USER root
+ARG MESH_LLM_REVISION=unknown
+ARG RUNNER_IMAGES_REVISION=unknown
 ENV MESH_RUNNER_ENVIRONMENT=public
+LABEL io.mesh-llm.source.revision="${MESH_LLM_REVISION}" \
+      io.mesh-llm.runner-images.revision="${RUNNER_IMAGES_REVISION}"
+RUN printf '%s\n' public > /etc/mesh-runner-environment \
+    && printf '%s\n' "${MESH_LLM_REVISION}" > /etc/mesh-llm-revision \
+    && printf '%s\n' "${RUNNER_IMAGES_REVISION}" > /etc/mesh-runner-images-revision
 # GHA convention paths. When this image is used as a workflow `container:`
 # image via DinD (host docker socket mounted on the ARC runner pod, no
 # kubelet bind-mount of /__e), /__e/node24/bin/node must resolve in-image.
@@ -197,6 +197,8 @@ FROM selected-backend AS self-hosted
 
 USER root
 ARG TARGETARCH
+ARG MESH_LLM_REVISION=unknown
+ARG RUNNER_IMAGES_REVISION=unknown
 ARG RUNNER_VERSION=2.336.0
 ARG RUNNER_SHA256_AMD64=04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d
 ARG RUNNER_SHA256_ARM64=58b758e420b87093fbd4bfddd368074960053e2f1388f01848c82624b90f27d1
@@ -218,6 +220,11 @@ RUN mkdir -p /__e /__w /github/home /github/workflow \
 # RUNNER_MANUALLY_TRAP_SIG and ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT are
 # inherited from the base image's ENV and are intentionally NOT re-declared here.
 ENV MESH_RUNNER_ENVIRONMENT=self-hosted
+LABEL io.mesh-llm.source.revision="${MESH_LLM_REVISION}" \
+      io.mesh-llm.runner-images.revision="${RUNNER_IMAGES_REVISION}"
+RUN printf '%s\n' self-hosted > /etc/mesh-runner-environment \
+    && printf '%s\n' "${MESH_LLM_REVISION}" > /etc/mesh-llm-revision \
+    && printf '%s\n' "${RUNNER_IMAGES_REVISION}" > /etc/mesh-runner-images-revision
 
 WORKDIR /home/runner
 USER runner
