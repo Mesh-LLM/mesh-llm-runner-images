@@ -87,24 +87,46 @@ cache-state evidence.
 | Main validation | Pending rollout | verify before labeling | — | — | — | — | — |
 | Main staging | Pending rollout | verify before labeling | — | — | — | — | — |
 
+The migration pull request selected only the public CPU AMD64 contract row, so
+it is not compared with the 20-platform PR control. It does provide a measured
+cache-reuse benchmark for identical commit `3831dce` and matrix inputs:
+
+| Cache state | Run attempt | Wall time | Aggregate job time | Depot build time | Wall reduction vs. cold | Aggregate reduction vs. cold |
+|---|---|---:|---:|---:|---:|---:|
+| Verified cold: empty project and 0 MB cache immediately beforehand | [30700898336 attempt 2](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30700898336/attempts/2) | 3m 02s | 2m 40s | 1m 59s | — | — |
+| Verified warm: BuildKit logged 18 cached steps | [30700898336 attempt 3](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30700898336/attempts/3) | 57s | 35s | 1s | 68.7% | 78.1% |
+
+The warm Depot build itself was 99.2% faster than the cold build. This isolates
+the persistent-cache effect; it is not a before/after migration claim because
+there is no pre-Depot control with this one-platform matrix.
+
 Use GitHub API timestamps for workflow and aggregate job time. Do not use the
 GitHub action step as Depot build time:
 
 ```bash
 run_id=RUN_ID
-gh run view "$run_id" --json createdAt,updatedAt,jobs | jq '
-  . as $run
-  | [.jobs[] | select(.conclusion != "skipped")] as $jobs
+run_attempt="${RUN_ATTEMPT:-$(gh run view "$run_id" --json attempt --jq .attempt)}"
+repository="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+metrics_dir="$(mktemp -d)"
+gh api "repos/$repository/actions/runs/$run_id/attempts/$run_attempt" \
+  > "$metrics_dir/run.json"
+gh api "repos/$repository/actions/runs/$run_id/attempts/$run_attempt/jobs" \
+  --paginate > "$metrics_dir/jobs.json"
+jq -s '
+  .[0] as $run
+  | [.[1].jobs[] | select(.conclusion != "skipped")] as $jobs
   | {
       wall_seconds:
-        (($run.updatedAt | fromdateiso8601) - ($run.createdAt | fromdateiso8601)),
+        (($run.updated_at | fromdateiso8601)
+          - ($run.run_started_at | fromdateiso8601)),
       executed_jobs: ($jobs | length),
       aggregate_job_seconds:
         ([$jobs[]
-          | ((.completedAt | fromdateiso8601) - (.startedAt | fromdateiso8601))]
+          | ((.completed_at | fromdateiso8601)
+            - (.started_at | fromdateiso8601))]
           | add)
     }
-'
+' "$metrics_dir/run.json" "$metrics_dir/jobs.json"
 ```
 
 Join the uploaded row records to Depot's machine-readable build list and emit
@@ -195,8 +217,9 @@ after enabling Depot:
    family index, compatibility index, tag, or verification step differs from
    the control contract. Performance never overrides a functional regression.
 
-The first targets are a verified-warm exhaustive validation under 6m 22s, main staging
-under 42m 30s, at least 33.3% less aggregate main job time, and zero external
-cache-export time. After three verified-warm runs, resize or autoscale Depot
-builders only when independent Depot resource evidence identifies saturation;
-otherwise preserve the current sizing and let cache reuse drive the gain.
+The first targets are a verified-warm exhaustive validation under 6m 22s, main
+staging under 42m 30s, at least 33.3% less aggregate main job time, and zero
+external cache-export time. After three verified-warm runs, resize or autoscale
+Depot builders only when independent Depot resource evidence identifies
+saturation; otherwise preserve the current sizing and let cache reuse drive the
+gain.
