@@ -272,6 +272,7 @@ if grep -q 'runs-on: depot-ubuntu' "$workflow"; then
   exit 1
 fi
 grep -Fq 'default: validate' "$workflow"
+grep -Fqx "          fetch-depth: \${{ github.event_name == 'pull_request' && '0' || '1' }}" "$workflow"
 grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$policy_job"
 grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$depot_config_step"
 grep -Fq 'unexpected checked-in Depot project ID' "$depot_config_step"

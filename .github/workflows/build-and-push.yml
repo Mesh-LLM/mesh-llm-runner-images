@@ -162,7 +162,9 @@ jobs:
       - name: Checkout runner image sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0
+          # Pull requests need their base and head history for family planning;
+          # trusted non-PR runs only resolve the checked-out revision.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           persist-credentials: false
 
       - name: Checkout MeshLLM source
