@@ -71,10 +71,10 @@ The reusable `stage-image-family.yml` workflow must remain on the allowlist beca
 ### Live enablement and audit
 
 The live setting is deliberately managed in GitHub Actions rather than checked into source.
-It is currently `DEPOT_RUNNERS_ENABLED=false`; this is pending runner-group verification.
-It was temporarily enabled only for the non-mutating
-validation canary, then restored to `false` because the available token cannot
-independently read the organization runner-group configuration.
+It is currently `DEPOT_RUNNERS_ENABLED=false`. The non-mutating validation canary used the
+`Default` Depot runner group; its current organization configuration allows public repositories
+and all workflows. That is not a trusted-only boundary, so enablement is blocked pending a
+dedicated runner-group reconfiguration and verification.
 
 `main` is protected with a pull request requirement, one fresh approval after the most recent push,
 resolved conversations, linear history, no force pushes or deletions, and administrator enforcement. Those branch protections keep an
@@ -82,7 +82,7 @@ unreviewed push from replacing the workflow gate, but are separate from and do
 not prove the runner-group control.
 
 Before setting `DEPOT_RUNNERS_ENABLED=true`, an organization administrator must
-confirm that the Depot runner group selects
+configure and confirm a dedicated Depot runner group that selects only
 `Mesh-LLM/mesh-llm-runner-images` and permits only these workflow references:
 `build-and-push.yml@refs/heads/main` and
 `stage-image-family.yml@refs/heads/main`. GitHub's YAML expressions cannot
