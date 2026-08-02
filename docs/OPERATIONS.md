@@ -70,21 +70,25 @@ The reusable `stage-image-family.yml` workflow must remain on the allowlist beca
 
 ### Live enablement and audit
 
-The live setting is deliberately managed in GitHub Actions rather than checked
-into source. On 2026-08-01, the repository variable
-`DEPOT_RUNNERS_ENABLED` was set to `true`. `main` is protected with a pull
-request requirement, one fresh approval after the most recent push, resolved
-conversations, linear history, no force pushes or deletions, and administrator
-enforcement. This keeps an unreviewed push from replacing the workflow gate.
+The live setting is deliberately managed in GitHub Actions rather than checked into source.
+It is currently `DEPOT_RUNNERS_ENABLED=false`; this is pending runner-group verification.
+It was temporarily enabled only for the non-mutating
+validation canary, then restored to `false` because the available token cannot
+independently read the organization runner-group configuration.
 
-The organization runner group remains the primary boundary and must be
-revalidated by an organization administrator before changing this setting: it
-must select this repository and allow only
+`main` is protected with a pull request requirement, one fresh approval after the most recent push,
+resolved conversations, linear history, no force pushes or deletions, and administrator enforcement. Those branch protections keep an
+unreviewed push from replacing the workflow gate, but are separate from and do
+not prove the runner-group control.
+
+Before setting `DEPOT_RUNNERS_ENABLED=true`, an organization administrator must
+confirm that the Depot runner group selects
+`Mesh-LLM/mesh-llm-runner-images` and permits only these workflow references:
 `build-and-push.yml@refs/heads/main` and
 `stage-image-family.yml@refs/heads/main`. GitHub's YAML expressions cannot
-prove that external runner-group restriction. If the restriction cannot be
-verified, set `DEPOT_RUNNERS_ENABLED=false`; do not treat the repository-local
-gate as a replacement for it.
+prove that external runner-group restriction. If either condition cannot be
+verified, retain `DEPOT_RUNNERS_ENABLED=false`; do not treat the
+repository-local gate as a replacement for it.
 
 The runner gate is independent of the remote builder: pull requests remain on
 GitHub-hosted runners, but their Docker builds still execute remotely in Depot.

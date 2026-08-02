@@ -29,6 +29,31 @@ extract_job_block() {
   [[ -s "$output_file" ]]
 }
 
+normalize_runs_on_expression() {
+  local job_file="$1"
+
+  awk '
+    /^    runs-on: >-$/ { printing = 1; next }
+    printing && /^    [[:alnum:]_-]+:/ { exit }
+    printing { print }
+  ' "$job_file" |
+    tr '\n\t' '  ' |
+    sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+extract_markdown_section() {
+  local document_file="$1"
+  local heading="$2"
+  local output_file="$3"
+
+  awk -v heading="$heading" '
+    $0 == heading { printing = 1 }
+    printing && /^## / && $0 != heading { exit }
+    printing { print }
+  ' "$document_file" > "$output_file"
+  [[ -s "$output_file" ]]
+}
+
 extract_step_block() {
   local job_file="$1"
   local step_name="$2"
@@ -267,10 +292,21 @@ grep -Fq "github.repository == '$expected_repository'" "$reusable_workflow"
 grep -Fq "github.ref == 'refs/heads/main'" "$reusable_workflow"
 grep -Fq "vars.DEPOT_RUNNERS_ENABLED == 'true'" "$reusable_workflow"
 grep -Fq "inputs.execution_mode != 'validate'" "$reusable_workflow"
-grep -Fq "'depot-ubuntu-24.04-16'" "$build_platform_job"
-grep -Fq "'depot-ubuntu-24.04-arm-16'" "$build_platform_job"
-grep -Fq "'depot-ubuntu-24.04-4'" "$assemble_family_index_job"
-if grep -Fq 'depot-ubuntu-24.04-16' "$assemble_family_index_job"; then
+build_platform_runs_on="$(normalize_runs_on_expression "$build_platform_job")"
+assemble_family_index_runs_on="$(normalize_runs_on_expression "$assemble_family_index_job")"
+if [[ "$build_platform_runs_on" != *"matrix.platform_id == 'amd64' && 'depot-ubuntu-24.04-16' || 'depot-ubuntu-24.04-arm-16'"* ]]; then
+  echo "platform runner expression does not map AMD64 and Arm64 to the native Depot labels" >&2
+  exit 1
+fi
+if [[ "$build_platform_runs_on" == *'depot-ubuntu-24.04-4'* ]]; then
+  echo "platform builds use the smaller Depot orchestration runner" >&2
+  exit 1
+fi
+if [[ "$assemble_family_index_runs_on" != *"&& 'depot-ubuntu-24.04-4' || 'ubuntu-24.04'"* ]]; then
+  echo "assembly runner expression does not select the smaller Depot runner" >&2
+  exit 1
+fi
+if [[ "$assemble_family_index_runs_on" == *'depot-ubuntu-24.04-16'* || "$assemble_family_index_runs_on" == *'depot-ubuntu-24.04-arm-16'* ]]; then
   echo "assembly uses a native-build runner instead of the smaller Depot runner" >&2
   exit 1
 fi
@@ -320,9 +356,21 @@ grep -Fq "needs.prepare.outputs.execution_mode == 'promote'" "$workflow"
 grep -Fq "scripts/reconcile-image-cohort.sh \"\$manifest\" target" "$workflow"
 grep -Fq 'target retention window is 14 days' \
   "$repository_root/docs/OPERATIONS.md"
-grep -Fq '### Live enablement and audit' \
-  "$repository_root/docs/OPERATIONS.md"
-grep -Fq 'request requirement, one fresh approval' \
-  "$repository_root/docs/OPERATIONS.md"
+operations_audit="$temporary_directory/live-enablement-audit.md"
+extract_markdown_section \
+  "$repository_root/docs/OPERATIONS.md" \
+  '### Live enablement and audit' \
+  "$operations_audit"
+grep -Fxq '### Live enablement and audit' "$operations_audit"
+grep -Fq "\`DEPOT_RUNNERS_ENABLED=false\`" "$operations_audit"
+grep -Fq 'pending runner-group verification' "$operations_audit"
+grep -Fq 'pull request requirement' "$operations_audit"
+grep -Fq 'one fresh approval after the most recent push' "$operations_audit"
+grep -Fq 'resolved conversations' "$operations_audit"
+grep -Fq 'administrator enforcement' "$operations_audit"
+grep -Fq "\`build-and-push.yml@refs/heads/main\`" "$operations_audit"
+grep -Fq "\`stage-image-family.yml@refs/heads/main\`" "$operations_audit"
+grep -Fq "Before setting \`DEPOT_RUNNERS_ENABLED=true\`" "$operations_audit"
+grep -Fq "retain \`DEPOT_RUNNERS_ENABLED=false\`" "$operations_audit"
 
 echo "runner selection and workflow matrix contracts passed"
