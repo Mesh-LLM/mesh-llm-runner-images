@@ -221,6 +221,7 @@ policy_job="$temporary_directory/policy-job.yml"
 validate_families_job="$temporary_directory/validate-families-job.yml"
 stage_families_job="$temporary_directory/stage-families-job.yml"
 build_platform_job="$temporary_directory/build-platform-job.yml"
+assemble_family_index_job="$temporary_directory/assemble-family-index-job.yml"
 depot_config_step="$temporary_directory/depot-config-step.yml"
 trust_boundary_step="$temporary_directory/trust-boundary-step.yml"
 depot_build_step="$temporary_directory/depot-build-step.yml"
@@ -229,6 +230,7 @@ extract_job_block "$workflow" policy "$policy_job"
 extract_job_block "$workflow" validate_families "$validate_families_job"
 extract_job_block "$workflow" stage_families "$stage_families_job"
 extract_job_block "$reusable_workflow" build_platform "$build_platform_job"
+extract_job_block "$reusable_workflow" assemble_family_index "$assemble_family_index_job"
 extract_step_block "$policy_job" \
   'Validate Depot remote builder configuration' "$depot_config_step"
 extract_step_block "$build_platform_job" \
@@ -265,6 +267,13 @@ grep -Fq "github.repository == '$expected_repository'" "$reusable_workflow"
 grep -Fq "github.ref == 'refs/heads/main'" "$reusable_workflow"
 grep -Fq "vars.DEPOT_RUNNERS_ENABLED == 'true'" "$reusable_workflow"
 grep -Fq "inputs.execution_mode != 'validate'" "$reusable_workflow"
+grep -Fq "'depot-ubuntu-24.04-16'" "$build_platform_job"
+grep -Fq "'depot-ubuntu-24.04-arm-16'" "$build_platform_job"
+grep -Fq "'depot-ubuntu-24.04-4'" "$assemble_family_index_job"
+if grep -Fq 'depot-ubuntu-24.04-16' "$assemble_family_index_job"; then
+  echo "assembly uses a native-build runner instead of the smaller Depot runner" >&2
+  exit 1
+fi
 grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$build_platform_job"
 grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$trust_boundary_step"
 grep -Fq 'depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461' \
@@ -311,7 +320,9 @@ grep -Fq "needs.prepare.outputs.execution_mode == 'promote'" "$workflow"
 grep -Fq "scripts/reconcile-image-cohort.sh \"\$manifest\" target" "$workflow"
 grep -Fq 'target retention window is 14 days' \
   "$repository_root/docs/OPERATIONS.md"
-grep -Fq 'no main-branch ruleset or branch protection' \
+grep -Fq '### Live enablement and audit' \
+  "$repository_root/docs/OPERATIONS.md"
+grep -Fq 'main is protected with a pull' \
   "$repository_root/docs/OPERATIONS.md"
 
 echo "runner selection and workflow matrix contracts passed"

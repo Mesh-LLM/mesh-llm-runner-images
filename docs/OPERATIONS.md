@@ -68,7 +68,23 @@ The organization runner-group restriction is the primary authorization boundary.
 
 The reusable `stage-image-family.yml` workflow must remain on the allowlist because it directly owns Depot jobs. If jobs queue unexpectedly, unset the variable to roll back immediately; do not change workflow labels or loosen runner-group restrictions under incident pressure.
 
-As of 2026-07-29, the live repository has no main-branch ruleset or branch protection. Enabling public Depot access remains blocked until main protection, required review for workflow changes, and the selected-workflow runner-group restriction are verified. This document records the blocker; it does not authorize changing repository settings.
+### Live enablement and audit
+
+The live setting is deliberately managed in GitHub Actions rather than checked
+into source. On 2026-08-01, the repository variable
+`DEPOT_RUNNERS_ENABLED` was set to `true`. `main` is protected with a pull
+request requirement, one fresh approval after the most recent push, resolved
+conversations, linear history, no force pushes or deletions, and administrator
+enforcement. This keeps an unreviewed push from replacing the workflow gate.
+
+The organization runner group remains the primary boundary and must be
+revalidated by an organization administrator before changing this setting: it
+must select this repository and allow only
+`build-and-push.yml@refs/heads/main` and
+`stage-image-family.yml@refs/heads/main`. GitHub's YAML expressions cannot
+prove that external runner-group restriction. If the restriction cannot be
+verified, set `DEPOT_RUNNERS_ENABLED=false`; do not treat the repository-local
+gate as a replacement for it.
 
 The runner gate is independent of the remote builder: pull requests remain on
 GitHub-hosted runners, but their Docker builds still execute remotely in Depot.

@@ -212,6 +212,55 @@ otherwise establish a pre-Depot control with the same selected matrix. Compare
 main staging to run `30522118156`. Report median and p95 platform-build time in
 addition to totals so one fast family cannot hide a CUDA or ROCm regression.
 
+## Depot Actions runner sizing comparison
+
+Runner sizing is a separate change from remote BuildKit performance. For a
+fair before-and-after comparison, dispatch one `validate` control with
+`DEPOT_RUNNERS_ENABLED=false`, then the same `refs/heads/main` validation with
+the setting restored to `true`. Keep `mesh_ref`, the complete platform matrix,
+and `canary_id` identical. Classify cache state independently for each run;
+cache sequence alone is not evidence of a warm build.
+
+For both runs, record wall time, aggregate job time, each native platform job's
+duration, and the time from run creation to job start. Capture the job runner
+name and runner group through the Actions jobs API to prove the selected path:
+the policy job stays GitHub-hosted; native AMD64 and Arm jobs use
+`depot-ubuntu-24.04-16` and `depot-ubuntu-24.04-arm-16`; and prepare, index
+assembly, staging, and promotion use `depot-ubuntu-24.04-4`. Do not compare a
+validation run to a staging run, because staging adds digest verification and
+index assembly work.
+
+The first matched warm-cache comparison used the same `mesh_ref` and
+`canary_id` on 2026-08-02. Both runs logged more than 400 `CACHED` BuildKit
+lines and each produced 20 Depot build records, so it is runner-orchestration
+evidence rather than a cold-cache result.
+
+| Path | Run | Wall time | Aggregate job time | Native median / p95 / slowest | Aggregate Depot build time | Estimated Depot runner cost |
+|---|---|---:|---:|---:|---:|---:|
+| GitHub-hosted control | [30726381635](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30726381635) | 3m 07s | 14m 50s | 27s / 2m 17s / 2m 24s | 10m 50s | — |
+| Depot runner candidate | [30726499385](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30726499385) | 4m 06s | 22m 51s | 44.5s / 2m 49s / 3m 18s | 11m 10s | $0.71 |
+
+The candidate used 12 `depot-ubuntu-24.04-16` jobs, eight
+`depot-ubuntu-24.04-arm-16` jobs, one `depot-ubuntu-24.04-4` preparation job,
+and a GitHub-hosted policy job. It validated the intended placement but was
+31.6% slower in wall time and 54.0% higher in aggregate job time. Depot build
+time was only 3.1% higher (and action elapsed time 1.8% higher), so this one
+warm sample attributes the regression to runner overhead or scheduling rather
+than a meaningful change in remote BuildKit work. The $0.71 figure multiplies
+the observed runner durations by Depot's listed per-minute rates; verify actual
+billed minutes in Depot before using it for budget reporting.
+
+Retain the existing Depot build-duration report alongside runner measurements.
+In the Depot dashboard, inspect CPU and memory utilization for the slowest
+native jobs, cache-hit trends, and the monthly elapsed and billed minutes.
+Depot flags CPU or memory peaks above 90% and OOM events; those are the
+evidence needed to consider a larger runner. Otherwise keep the initial
+16-vCPU native and 4-vCPU orchestration sizes for at least three verified-warm
+runs. Depot bills the 16-vCPU Linux runners at an 8x minute multiplier and the
+4-vCPU runner at 2x, so a faster wall time is not sufficient evidence to
+upsize. See Depot's [runner type and billing table](https://depot.dev/docs/github-actions/runner-types)
+and [container-build metrics guide](https://depot.dev/docs/container-builds/observability/container-build-metrics).
+
 ## Depot rollout and no-regression protocol
 
 For the first gated pull request, trusted validation canary, and staged publish
