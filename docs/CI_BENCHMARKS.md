@@ -264,26 +264,60 @@ but was 31.6% slower in wall time (`(246 - 187) / 187`) and 54.0% higher in
 aggregate job time (`(1371 - 890) / 890`). Depot build-record time was 3.1%
 higher (`(670 - 650) / 650`), while the observed build-action elapsed time was
 1.9% higher (`(688 - 675) / 675`). This suggests runner overhead or scheduling,
-rather than a meaningful change in remote BuildKit work, but one pair is not a
-sizing decision.
+rather than a meaningful change in remote BuildKit work. The follow-up pairs
+below determine whether that first result holds.
 
-The $0.7132 estimate is transparent arithmetic over observed runner seconds:
+The first-pair $0.7132 estimate is transparent arithmetic over observed runner seconds:
 `980 / 60 * $0.032 + 349 / 60 * $0.032 + 33 / 60 * $0.008 = $0.5227 +
 $0.1861 + $0.0044`. The two 16-vCPU labels use the listed `$0.032/min` rate;
 the 4-vCPU preparation label uses `$0.008/min`. This is not a record of Depot
 billed minutes or an invoice: obtain those from Depot before using the estimate
 for budget reporting.
 
+### Three-pair warm-cache result and scope decision
+
+Two follow-up control/candidate pairs used the same `main` SHA, `mesh_ref`,
+complete matrix, and respective `canary_id` values on 2026-08-02. All six
+validations had cache evidence for every native row: 20 rows per run, with
+control/candidate `CACHED` line totals of 414/434, 431/493, and 470/492. Each
+row reported 14--32 cached layers, so this is a three-pair warm-cache result,
+not a cold-cache or changed-source comparison.
+
+`Active job time` below is the sum of the policy, preparation, and 20 native
+platform jobs. The candidate-cost estimate uses observed native runner seconds
+at the listed 16-vCPU rate plus preparation seconds at the 4-vCPU rate; it is
+not Depot billed usage.
+
+| Pair | Matched runs | Wall time: control → Depot | Active job time: control → Depot | Native runner time: control → Depot | Native build-action time: control → Depot | Candidate estimate |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | [30726381635](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30726381635) → [30726499385](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30726499385) | 187s → 246s (+31.6%) | 890s → 1,371s (+54.0%) | 863s → 1,329s (+54.0%) | 675s → 688s (+1.9%) | $0.7132 |
+| 2 | [30731681939](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30731681939) → [30731783911](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30731783911) | 125s → 141s (+12.8%) | 750s → 1,147s (+52.9%) | 724s → 1,101s (+52.1%) | 518s → 473s (-8.7%) | $0.5921 |
+| 3 | [30731873054](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30731873054) → [30731966028](https://github.com/Mesh-LLM/mesh-llm-runner-images/actions/runs/30731966028) | 153s → 165s (+7.8%) | 562s → 1,298s (+131.0%) | 534s → 1,253s (+134.6%) | 358s → 579s (+61.7%) | $0.6731 |
+
+The median pairwise effect is +16 seconds (+12.8%) wall time, +481 seconds
+(+54.0%) active job time, and +466 seconds (+54.0%) native runner time. Native
+build-action time has a +13-second (+1.9%) median but varies from -45 to +221
+seconds, so it does not establish a remote BuildKit advantage. Depot was slower
+in wall time and higher in runner time in every matched pair.
+
+The rollout remains enabled for this repository's trusted builds at the current
+16-vCPU native and 4-vCPU orchestration sizes, but no larger runner, consumer
+workflow, or cross-repository expansion is justified by these measurements.
+`Mesh-LLM/mesh-llm` is a downstream consumer of the published images, including
+its CI, artifact, and release workflows, but it pins immutable image digests and
+uses a separately scoped runner selector. This rollout does not trigger or
+retime those jobs; a faster publication would only reduce availability lead
+time before an explicit digest update. No such speedup was demonstrated here.
+
 Retain the existing Depot build-duration report alongside runner measurements.
 In the Depot dashboard, inspect CPU and memory utilization for the slowest
 native jobs, cache-hit trends, and the monthly elapsed and billed minutes.
 Depot flags CPU or memory peaks above 90% and OOM events; those are the
-evidence needed to consider a larger runner. Otherwise keep the initial
-16-vCPU native and 4-vCPU orchestration sizes for at least three verified-warm
-control/candidate comparison pairs. Depot bills the 16-vCPU Linux runners at an
-8x minute multiplier and the
-4-vCPU runner at 2x, so a faster wall time is not sufficient evidence to
-upsize. See Depot's [runner type and billing table](https://depot.dev/docs/github-actions/runner-types)
+evidence needed to reconsider a larger runner. Any future size change needs a
+new three-pair verified-warm comparison for that workload and utilization
+evidence; a faster wall time alone is not sufficient. Depot bills the 16-vCPU
+Linux runners at an 8x minute multiplier and the 4-vCPU runner at 2x. See
+Depot's [runner type and billing table](https://depot.dev/docs/github-actions/runner-types)
 and [container-build metrics guide](https://depot.dev/docs/container-builds/observability/container-build-metrics).
 
 ## Depot rollout and no-regression protocol
