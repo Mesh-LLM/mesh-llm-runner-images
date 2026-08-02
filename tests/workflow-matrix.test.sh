@@ -322,7 +322,7 @@ grep -Fq 'target retention window is 14 days' \
   "$repository_root/docs/OPERATIONS.md"
 grep -Fq '### Live enablement and audit' \
   "$repository_root/docs/OPERATIONS.md"
-grep -Fq 'main is protected with a pull' \
+grep -Fq 'request requirement, one fresh approval' \
   "$repository_root/docs/OPERATIONS.md"
 
 echo "runner selection and workflow matrix contracts passed"
