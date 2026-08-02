@@ -54,7 +54,10 @@ USER root
 COPY profiles/common.yml /tmp/profiles/common.yml
 COPY profiles/${RUNNER_ENVIRONMENT}.yml /tmp/profiles/environment.yml
 COPY scripts/profile-packages.sh /usr/local/bin/profile-packages
-RUN chmod 0755 /usr/local/bin/profile-packages \
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    chmod 0755 /usr/local/bin/profile-packages \
+    && rm -f /etc/apt/apt.conf.d/docker-clean \
     && mapfile -t packages < <(profile-packages /tmp/profiles/common.yml /tmp/profiles/environment.yml) \
     && test "${#packages[@]}" -gt 0 \
     && apt-get update \
@@ -62,9 +65,7 @@ RUN chmod 0755 /usr/local/bin/profile-packages \
     && add-apt-repository -y universe \
     && apt-get update \
     && apt-get install -y --no-install-recommends "${packages[@]}" \
-    && rm -rf /tmp/profiles \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /tmp/profiles
 
 # The base image already provides:
 #   - group `docker` (gid 123), runner user (uid 1001) with supplementary
@@ -77,17 +78,25 @@ RUN chmod 0755 /usr/local/bin/profile-packages \
 #     runner --` (util-linux) instead of `sudo -u runner` for the
 #     root→runner user transitions during image build.
 # Only the /opt/mesh-llm workdir needs to be created on top of the base.
-RUN mkdir -p /opt/mesh-llm \
+RUN mkdir -p \
+      /opt/mesh-llm \
+      /home/runner/.cargo \
+      /home/runner/.local/share/pnpm \
+      /home/runner/.rustup/downloads \
     && chown -R runner:docker /opt/mesh-llm /home/runner
 
 COPY scripts/install-core-tools.sh /usr/local/bin/install-core-tools
-RUN chmod 0755 /usr/local/bin/install-core-tools \
+RUN --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-${TARGETARCH},target=/root/.npm,sharing=locked \
+    --mount=type=cache,id=mesh-runner-rustup-stable-ubuntu24-${TARGETARCH},target=/home/runner/.rustup/downloads,uid=1001,gid=123,mode=0775,sharing=locked \
+    --mount=type=cache,id=mesh-runner-tool-downloads-ubuntu24-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
+    chmod 0755 /usr/local/bin/install-core-tools \
     && TARGETARCH="${TARGETARCH}" NODE_MAJOR="${NODE_MAJOR}" JUST_VERSION="${JUST_VERSION}" SCCACHE_VERSION="${SCCACHE_VERSION}" \
        /usr/local/bin/install-core-tools
 
 COPY build-context/manifests/${RUNNER_ENVIRONMENT}/ /opt/mesh-llm/manifests/
 COPY scripts/warm-dependencies.sh /usr/local/bin/warm-dependencies
-RUN chmod 0755 /usr/local/bin/warm-dependencies \
+RUN --mount=type=cache,id=mesh-runner-pip-python3.12-ubuntu24-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
+    chmod 0755 /usr/local/bin/warm-dependencies \
     && chown -R runner:docker /opt/mesh-llm/manifests \
     && /usr/local/bin/warm-dependencies /opt/mesh-llm/manifests
 
@@ -109,7 +118,10 @@ ARG TARGETARCH
 ARG INSTALL_CUDA=1
 ARG CUDA_SERIES=12-9
 COPY scripts/install-cuda-toolchain.sh /usr/local/bin/install-cuda-toolchain
-RUN chmod 0755 /usr/local/bin/install-cuda-toolchain \
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-cuda${CUDA_SERIES}-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-cuda${CUDA_SERIES}-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=mesh-runner-tool-downloads-ubuntu24-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
+    chmod 0755 /usr/local/bin/install-cuda-toolchain \
     && TARGETARCH="${TARGETARCH}" INSTALL_CUDA="${INSTALL_CUDA}" CUDA_SERIES="${CUDA_SERIES}" \
        /usr/local/bin/install-cuda-toolchain
 ENV CUDA_HOME=/usr/local/cuda \
@@ -124,7 +136,9 @@ ARG TARGETARCH
 ARG INSTALL_ROCM=1
 ARG ROCM_VERSION=7.2.3
 COPY scripts/install-rocm-toolchain.sh /usr/local/bin/install-rocm-toolchain
-RUN chmod 0755 /usr/local/bin/install-rocm-toolchain \
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-rocm${ROCM_VERSION}-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-rocm${ROCM_VERSION}-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    chmod 0755 /usr/local/bin/install-rocm-toolchain \
     && TARGETARCH="${TARGETARCH}" INSTALL_ROCM="${INSTALL_ROCM}" ROCM_VERSION="${ROCM_VERSION}" \
        /usr/local/bin/install-rocm-toolchain
 ENV ROCM_PATH=/opt/rocm \
@@ -138,17 +152,18 @@ FROM backend-${BACKEND} AS selected-backend
 ARG BACKEND
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
+ARG TARGETARCH
 USER root
 COPY profiles/backends/${BACKEND}.yml /tmp/profiles/backend.yml
-RUN profile-packages /tmp/profiles/backend.yml > /tmp/profiles/backend-packages.txt \
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-${BACKEND}-${CUDA_SERIES}-${ROCM_VERSION}-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-${BACKEND}-${CUDA_SERIES}-${ROCM_VERSION}-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    profile-packages /tmp/profiles/backend.yml > /tmp/profiles/backend-packages.txt \
     && mapfile -t packages < /tmp/profiles/backend-packages.txt \
     && if (( ${#packages[@]} > 0 )); then \
           apt-get update; \
           apt-get install -y --no-install-recommends "${packages[@]}"; \
         fi \
     && rm -f /tmp/profiles/backend.yml /tmp/profiles/backend-packages.txt \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
     && printf '%s\n' "${BACKEND}" > /etc/mesh-runner-backend \
     && printf '%s\n' "${CUDA_SERIES}" > /etc/mesh-runner-cuda-series \
     && printf '%s\n' "${ROCM_VERSION}" > /etc/mesh-runner-rocm-version
@@ -204,7 +219,8 @@ ARG RUNNER_SHA256_AMD64=04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535a
 ARG RUNNER_SHA256_ARM64=58b758e420b87093fbd4bfddd368074960053e2f1388f01848c82624b90f27d1
 
 COPY scripts/install-actions-runner.sh /usr/local/bin/install-actions-runner
-RUN chmod 0755 /usr/local/bin/install-actions-runner \
+RUN --mount=type=cache,id=mesh-runner-actions-runner-downloads-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
+    chmod 0755 /usr/local/bin/install-actions-runner \
     && TARGETARCH="${TARGETARCH}" RUNNER_VERSION="${RUNNER_VERSION}" \
        RUNNER_SHA256_AMD64="${RUNNER_SHA256_AMD64}" RUNNER_SHA256_ARM64="${RUNNER_SHA256_ARM64}" \
        /usr/local/bin/install-actions-runner

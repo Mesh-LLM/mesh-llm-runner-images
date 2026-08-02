@@ -358,3 +358,22 @@ external cache-export time. After three verified-warm runs, resize or autoscale
 Depot builders only when independent Depot resource evidence identifies
 saturation; otherwise preserve the current sizing and let cache reuse drive the
 gain.
+
+## Dependency cache-mount benchmark
+
+On 2026-08-02, the public ARM64 CPU toolchain stage was rebuilt on `mesh1`
+with BuildKit layer reuse disabled for `toolchain` and the result exported as
+`cacheonly`. This forces every instruction to execute while preserving cache
+mount contents, which isolates the invalidated-layer case these mounts target.
+The input commit and manifest bundle were identical.
+
+| Dockerfile | Cache state | Wall time |
+|---|---|---:|
+| `main` before cache mounts | No dependency cache mounts | 185s |
+| Cache-mount branch | Partially warm after interrupted setup | 141s |
+| Cache-mount branch | Verified warm | 150s |
+
+The conservative verified-warm comparison is 18.9% faster than the control.
+The dependency-warming instruction fell from 86.4 seconds to 65.3 seconds
+(24.4%). Ordinary unchanged builds still use the faster Docker layer cache;
+this result measures rebuilds where dependency inputs invalidate that layer.
