@@ -328,7 +328,11 @@ grep -Fq "github/workflows/build-and-push.yml@refs/heads/main" \
 grep -Fq 'DEPOT_ACTIONS_RUNNER_REPOSITORY is invalid' "$base_image_step"
 grep -Fq "depot pull-token --project \"\$DEPOT_PROJECT_ID\"" \
   "$base_image_login_step"
-grep -Fq 'steps.base_image.outputs.cache_selected' "$base_image_login_step"
+grep -Fq "if: steps.base_image.outputs.cache_selected == 'true'" \
+  "$base_image_login_step"
+grep -Fq \
+  "docker login \"\$DEPOT_REGISTRY_HOST\" --username x-token --password-stdin" \
+  "$base_image_login_step"
 if grep -Eq 'secrets\.|DEPOT_TOKEN|REGISTRY_PULL_TOKEN' "$base_image_login_step"; then
   echo "pull-through login persists or consumes a long-lived token" >&2
   exit 1
