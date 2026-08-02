@@ -19,8 +19,17 @@ esac
 download_cache="${DOWNLOAD_CACHE_DIR:-/var/cache/mesh-downloads}"
 keyring="${download_cache}/cuda-keyring_1.1-1_all-${repository_arch}.deb"
 mkdir -p "$download_cache"
-test -s "$keyring" || curl -fsSL --retry 3 -o "$keyring" \
-  "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${repository_arch}/cuda-keyring_1.1-1_all.deb"
+if [[ ! -s "$keyring" ]] || ! dpkg-deb --info "$keyring" >/dev/null 2>&1; then
+  rm -f "$keyring"
+  keyring_tmp="$(mktemp "${keyring}.tmp.XXXXXX")"
+  if ! curl -fsSL --retry 3 -o "$keyring_tmp" \
+      "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${repository_arch}/cuda-keyring_1.1-1_all.deb" \
+      || ! dpkg-deb --info "$keyring_tmp" >/dev/null; then
+    rm -f "$keyring_tmp"
+    exit 1
+  fi
+  mv -f "$keyring_tmp" "$keyring"
+fi
 dpkg -i "$keyring"
 
 apt-get update
