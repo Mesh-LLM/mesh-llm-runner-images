@@ -16,10 +16,12 @@ case "$TARGETARCH" in
   *) echo "unsupported CUDA architecture: $TARGETARCH" >&2; exit 1 ;;
 esac
 
-curl -fsSL -o /tmp/cuda-keyring.deb \
+download_cache="${DOWNLOAD_CACHE_DIR:-/var/cache/mesh-downloads}"
+keyring="${download_cache}/cuda-keyring_1.1-1_all-${repository_arch}.deb"
+mkdir -p "$download_cache"
+test -s "$keyring" || curl -fsSL --retry 3 -o "$keyring" \
   "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${repository_arch}/cuda-keyring_1.1-1_all.deb"
-dpkg -i /tmp/cuda-keyring.deb
-rm -f /tmp/cuda-keyring.deb
+dpkg -i "$keyring"
 
 apt-get update
 # MeshLLM's llama.cpp build needs the CUDA compiler, runtime headers, and
@@ -30,9 +32,6 @@ apt-get install -y --no-install-recommends \
   "cuda-compiler-${CUDA_SERIES}" \
   "cuda-cudart-dev-${CUDA_SERIES}" \
   "libcublas-dev-${CUDA_SERIES}"
-apt-get clean
-rm -rf /var/lib/apt/lists/*
-
 if [[ -d "/usr/local/cuda-${CUDA_SERIES//-/.}" && ! -e /usr/local/cuda ]]; then
   ln -s "/usr/local/cuda-${CUDA_SERIES//-/.}" /usr/local/cuda
 fi

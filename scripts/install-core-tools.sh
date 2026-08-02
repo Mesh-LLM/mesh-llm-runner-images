@@ -6,6 +6,9 @@ set -euo pipefail
 : "${JUST_VERSION:?JUST_VERSION is required}"
 : "${SCCACHE_VERSION:?SCCACHE_VERSION is required}"
 
+download_cache="${DOWNLOAD_CACHE_DIR:-/var/cache/mesh-downloads}"
+mkdir -p "$download_cache"
+
 case "$TARGETARCH" in
   amd64) rust_arch=x86_64 ;;
   arm64) rust_arch=aarch64 ;;
@@ -44,23 +47,27 @@ install_rust() {
 install_just() {
   local archive="just-${JUST_VERSION}-${rust_arch}-unknown-linux-musl.tar.gz"
   local base="https://github.com/casey/just/releases/download/${JUST_VERSION}"
-  curl -fsSLO "${base}/${archive}"
-  curl -fsSLo SHA256SUMS "${base}/SHA256SUMS"
-  grep " ${archive}$" SHA256SUMS | sha256sum -c -
-  tar -xzf "$archive" just
+  local archive_path="${download_cache}/${archive}"
+  local checksums="${download_cache}/just-${JUST_VERSION}-SHA256SUMS"
+  test -s "$archive_path" || curl -fsSL --retry 3 "${base}/${archive}" -o "$archive_path"
+  test -s "$checksums" || curl -fsSL --retry 3 "${base}/SHA256SUMS" -o "$checksums"
+  grep " ${archive}$" "$checksums" | (cd "$download_cache" && sha256sum -c -)
+  tar -xzf "$archive_path" just
   install -m 0755 just /usr/local/bin/just
-  rm -f "$archive" SHA256SUMS just
+  rm -f just
 }
 
 install_sccache() {
   local archive="sccache-v${SCCACHE_VERSION}-${rust_arch}-unknown-linux-musl.tar.gz"
   local base="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}"
-  curl -fsSLO "${base}/${archive}"
-  curl -fsSLO "${base}/${archive}.sha256"
-  printf '%s  %s\n' "$(cat "${archive}.sha256")" "$archive" | sha256sum -c -
-  tar -xzf "$archive"
+  local archive_path="${download_cache}/${archive}"
+  local checksum_path="${archive_path}.sha256"
+  test -s "$archive_path" || curl -fsSL --retry 3 "${base}/${archive}" -o "$archive_path"
+  test -s "$checksum_path" || curl -fsSL --retry 3 "${base}/${archive}.sha256" -o "$checksum_path"
+  printf '%s  %s\n' "$(awk 'NR == 1 { print $1 }' "$checksum_path")" "$archive_path" | sha256sum -c -
+  tar -xzf "$archive_path"
   install -m 0755 "sccache-v${SCCACHE_VERSION}-${rust_arch}-unknown-linux-musl/sccache" /usr/local/bin/sccache
-  rm -rf "$archive" "${archive}.sha256" "sccache-v${SCCACHE_VERSION}-${rust_arch}-unknown-linux-musl"
+  rm -rf "sccache-v${SCCACHE_VERSION}-${rust_arch}-unknown-linux-musl"
 }
 
 cd /tmp

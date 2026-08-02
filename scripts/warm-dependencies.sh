@@ -11,7 +11,7 @@ fi
 
 python3 -m venv /opt/mesh-llm/venv
 if [[ -f "$manifest_root/ci/requirements-ci-python.txt" ]]; then
-  /opt/mesh-llm/venv/bin/pip install --disable-pip-version-check --no-cache-dir \
+  /opt/mesh-llm/venv/bin/pip install --disable-pip-version-check \
     -r "$manifest_root/ci/requirements-ci-python.txt"
 fi
 

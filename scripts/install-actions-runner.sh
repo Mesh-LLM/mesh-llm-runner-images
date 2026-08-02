@@ -18,11 +18,12 @@ esac
 
 archive="actions-runner-linux-${runner_arch}-${RUNNER_VERSION}.tar.gz"
 url="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${archive}"
+download_cache="${DOWNLOAD_CACHE_DIR:-/var/cache/mesh-downloads}"
+archive_path="${download_cache}/${archive}"
 
-mkdir -p /home/runner
-curl -fsSL "$url" -o "/tmp/${archive}"
-printf '%s  %s\n' "$expected_sha" "/tmp/${archive}" | sha256sum -c -
-tar -xzf "/tmp/${archive}" -C /home/runner --owner=runner --group=docker
-rm -f "/tmp/${archive}"
+mkdir -p /home/runner "$download_cache"
+test -s "$archive_path" || curl -fsSL --retry 3 "$url" -o "$archive_path"
+printf '%s  %s\n' "$expected_sha" "$archive_path" | sha256sum -c -
+tar -xzf "$archive_path" -C /home/runner --owner=runner --group=docker
 
 test -x /home/runner/run.sh
