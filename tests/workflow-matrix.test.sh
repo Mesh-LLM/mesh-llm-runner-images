@@ -29,6 +29,31 @@ extract_job_block() {
   [[ -s "$output_file" ]]
 }
 
+normalize_runs_on_expression() {
+  local job_file="$1"
+
+  awk '
+    /^    runs-on: >-$/ { printing = 1; next }
+    printing && /^    [[:alnum:]_-]+:/ { exit }
+    printing { print }
+  ' "$job_file" |
+    tr '\n\t' '  ' |
+    sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+extract_markdown_section() {
+  local document_file="$1"
+  local heading="$2"
+  local output_file="$3"
+
+  awk -v heading="$heading" '
+    $0 == heading { printing = 1 }
+    printing && /^## / && $0 != heading { exit }
+    printing { print }
+  ' "$document_file" > "$output_file"
+  [[ -s "$output_file" ]]
+}
+
 extract_step_block() {
   local job_file="$1"
   local step_name="$2"
@@ -221,6 +246,7 @@ policy_job="$temporary_directory/policy-job.yml"
 validate_families_job="$temporary_directory/validate-families-job.yml"
 stage_families_job="$temporary_directory/stage-families-job.yml"
 build_platform_job="$temporary_directory/build-platform-job.yml"
+assemble_family_index_job="$temporary_directory/assemble-family-index-job.yml"
 depot_config_step="$temporary_directory/depot-config-step.yml"
 trust_boundary_step="$temporary_directory/trust-boundary-step.yml"
 depot_build_step="$temporary_directory/depot-build-step.yml"
@@ -229,6 +255,7 @@ extract_job_block "$workflow" policy "$policy_job"
 extract_job_block "$workflow" validate_families "$validate_families_job"
 extract_job_block "$workflow" stage_families "$stage_families_job"
 extract_job_block "$reusable_workflow" build_platform "$build_platform_job"
+extract_job_block "$reusable_workflow" assemble_family_index "$assemble_family_index_job"
 extract_step_block "$policy_job" \
   'Validate Depot remote builder configuration' "$depot_config_step"
 extract_step_block "$build_platform_job" \
@@ -245,6 +272,7 @@ if grep -q 'runs-on: depot-ubuntu' "$workflow"; then
   exit 1
 fi
 grep -Fq 'default: validate' "$workflow"
+grep -Fqx "          fetch-depth: \${{ github.event_name == 'pull_request' && '0' || '1' }}" "$workflow"
 grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$policy_job"
 grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$depot_config_step"
 grep -Fq 'unexpected checked-in Depot project ID' "$depot_config_step"
@@ -265,6 +293,24 @@ grep -Fq "github.repository == '$expected_repository'" "$reusable_workflow"
 grep -Fq "github.ref == 'refs/heads/main'" "$reusable_workflow"
 grep -Fq "vars.DEPOT_RUNNERS_ENABLED == 'true'" "$reusable_workflow"
 grep -Fq "inputs.execution_mode != 'validate'" "$reusable_workflow"
+build_platform_runs_on="$(normalize_runs_on_expression "$build_platform_job")"
+assemble_family_index_runs_on="$(normalize_runs_on_expression "$assemble_family_index_job")"
+if [[ "$build_platform_runs_on" != *"matrix.platform_id == 'amd64' && 'depot-ubuntu-24.04-16' || 'depot-ubuntu-24.04-arm-16'"* ]]; then
+  echo "platform runner expression does not map AMD64 and Arm64 to the native Depot labels" >&2
+  exit 1
+fi
+if [[ "$build_platform_runs_on" == *'depot-ubuntu-24.04-4'* ]]; then
+  echo "platform builds use the smaller Depot orchestration runner" >&2
+  exit 1
+fi
+if [[ "$assemble_family_index_runs_on" != *"&& 'depot-ubuntu-24.04-4' || 'ubuntu-24.04'"* ]]; then
+  echo "assembly runner expression does not select the smaller Depot runner" >&2
+  exit 1
+fi
+if [[ "$assemble_family_index_runs_on" == *'depot-ubuntu-24.04-16'* || "$assemble_family_index_runs_on" == *'depot-ubuntu-24.04-arm-16'* ]]; then
+  echo "assembly uses a native-build runner instead of the smaller Depot runner" >&2
+  exit 1
+fi
 grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$build_platform_job"
 grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$trust_boundary_step"
 grep -Fq 'depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461' \
@@ -311,7 +357,24 @@ grep -Fq "needs.prepare.outputs.execution_mode == 'promote'" "$workflow"
 grep -Fq "scripts/reconcile-image-cohort.sh \"\$manifest\" target" "$workflow"
 grep -Fq 'target retention window is 14 days' \
   "$repository_root/docs/OPERATIONS.md"
-grep -Fq 'no main-branch ruleset or branch protection' \
-  "$repository_root/docs/OPERATIONS.md"
+operations_audit="$temporary_directory/live-enablement-audit.md"
+extract_markdown_section \
+  "$repository_root/docs/OPERATIONS.md" \
+  '### Live enablement and audit' \
+  "$operations_audit"
+grep -Fxq '### Live enablement and audit' "$operations_audit"
+grep -Fq "\`DEPOT_RUNNERS_ENABLED=true\`" "$operations_audit"
+grep -Fq "\`Default\` Depot runner group" "$operations_audit"
+grep -Fq 'shared by multiple' "$operations_audit"
+grep -Fq 'organization repositories' "$operations_audit"
+grep -Fq 'per-run selection gate' "$operations_audit"
+grep -Fq "\`main\` is protected with a pull request requirement" "$operations_audit"
+grep -Fq 'one fresh approval after the most recent push' "$operations_audit"
+grep -Fq 'resolved conversations' "$operations_audit"
+grep -Fq 'administrator enforcement' "$operations_audit"
+grep -Fq "\`build-and-push.yml@refs/heads/main\`" "$operations_audit"
+grep -Fq 'Pull requests, tags, and feature-branch workflow dispatches' "$operations_audit"
+grep -Fq 'use GitHub-hosted runners' "$operations_audit"
+grep -Fq "\`DEPOT_RUNNERS_ENABLED=false\` or remove the variable" "$operations_audit"
 
 echo "runner selection and workflow matrix contracts passed"

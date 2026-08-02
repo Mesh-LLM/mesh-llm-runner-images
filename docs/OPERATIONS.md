@@ -60,15 +60,29 @@ When enabled, native builds use `depot-ubuntu-24.04-16` and `depot-ubuntu-24.04-
 
 The weekly default-branch publication is the deliberate scheduled exception: it is a trusted, high-value full rebuild and may use Depot when the same exact gate is enabled. A scheduled run on any other ref falls back to GitHub-hosted runners.
 
-The organization runner-group restriction is the primary authorization boundary. The repository-local selectors and the called workflow's independent literal-label mapping are defense in depth because pull-request code can modify its own local workflow. Before enabling public-repository access or setting the variable:
+Depot runners are an existing organization-wide runner path shared by this repository and other organization repositories. Enabling this repository's gate does not change the shared runner group's membership or workflow access. The repository-local selector and the called workflow's independent literal-label mapping request the Depot labels only for the trusted conditions above.
 
-1. configure the Depot runner group for selected repositories and include `Mesh-LLM/mesh-llm-runner-images`;
-2. restrict workflow access and allowlist both `build-and-push.yml@refs/heads/main` and `stage-image-family.yml@refs/heads/main`; and
-3. only after both restrictions are active, enable public access and set `DEPOT_RUNNERS_ENABLED=true`.
+The reusable `stage-image-family.yml` workflow owns the Depot jobs and must retain its independent mapping for the exact `build-and-push.yml@refs/heads/main` caller. If jobs queue unexpectedly, unset the variable to roll back immediately; do not change runner labels under incident pressure.
 
-The reusable `stage-image-family.yml` workflow must remain on the allowlist because it directly owns Depot jobs. If jobs queue unexpectedly, unset the variable to roll back immediately; do not change workflow labels or loosen runner-group restrictions under incident pressure.
+### Live enablement and audit
 
-As of 2026-07-29, the live repository has no main-branch ruleset or branch protection. Enabling public Depot access remains blocked until main protection, required review for workflow changes, and the selected-workflow runner-group restriction are verified. This document records the blocker; it does not authorize changing repository settings.
+The live setting is deliberately managed in GitHub Actions rather than checked into source.
+It is currently `DEPOT_RUNNERS_ENABLED=true`, which enables this repository's existing
+organization-wide Depot runner path. The `Default` Depot runner group is shared by multiple
+organization repositories; shared runner availability is separate from this workflow's
+per-run selection gate.
+
+`main` is protected with a pull request requirement, one fresh approval after the most recent push,
+resolved conversations, linear history, no force pushes or deletions, and administrator enforcement. Those branch protections keep an
+unreviewed push from replacing the protected release workflow gate.
+
+Every job that can select Depot checks the exact repository, `refs/heads/main`,
+`build-and-push.yml@refs/heads/main` workflow reference, a trusted event, and
+the literal enabled value. The reusable workflow independently repeats that
+mapping. Pull requests, tags, and feature-branch workflow dispatches therefore
+use GitHub-hosted runners; the matrix test asserts both the trusted Depot labels
+and the GitHub-hosted fallback labels. To roll back immediately, set
+`DEPOT_RUNNERS_ENABLED=false` or remove the variable.
 
 The runner gate is independent of the remote builder: pull requests remain on
 GitHub-hosted runners, but their Docker builds still execute remotely in Depot.
