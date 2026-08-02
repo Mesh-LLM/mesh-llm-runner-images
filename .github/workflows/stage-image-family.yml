@@ -159,6 +159,66 @@ jobs:
         with:
           version: 2.101.77
 
+      - name: Select Actions runner base image
+        id: base_image
+        shell: bash
+        env:
+          CACHE_ENABLED: ${{ vars.DEPOT_REGISTRY_CACHE_ENABLED }}
+          DEPOT_ACTIONS_RUNNER_REPOSITORY: ${{ vars.DEPOT_ACTIONS_RUNNER_REPOSITORY }}
+          DEPOT_REGISTRY_HOST: ${{ vars.DEPOT_REGISTRY_HOST }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXECUTION_MODE: ${{ inputs.execution_mode }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SOURCE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          upstream_image=ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+          selected_image="$upstream_image"
+          cache_selected=false
+
+          if [[ "$CACHE_ENABLED" == true && "$EXECUTION_MODE" != validate ]]; then
+            expected_repository=Mesh-LLM/mesh-llm-runner-images
+            expected_workflow="$expected_repository/.github/workflows/build-and-push.yml@refs/heads/main"
+            [[ "$REPOSITORY" == "$expected_repository" &&
+               "$WORKFLOW_SOURCE_REF" == refs/heads/main &&
+               "$WORKFLOW_REF" == "$expected_workflow" ]] || {
+              echo "pull-through base rejected untrusted caller" >&2
+              exit 1
+            }
+            case "$EVENT_NAME" in
+              push|schedule|workflow_dispatch) ;;
+              *) echo "pull-through base rejected event: $EVENT_NAME" >&2; exit 1 ;;
+            esac
+            [[ "$DEPOT_REGISTRY_HOST" =~ ^[a-z0-9-]+\.registry\.depot\.dev$ ]] || {
+              echo "DEPOT_REGISTRY_HOST is invalid" >&2
+              exit 1
+            }
+            [[ "$DEPOT_ACTIONS_RUNNER_REPOSITORY" =~ ^[a-z0-9]+([._/-]?[a-z0-9]+)*$ &&
+               "$DEPOT_ACTIONS_RUNNER_REPOSITORY" != *..* ]] || {
+              echo "DEPOT_ACTIONS_RUNNER_REPOSITORY is invalid" >&2
+              exit 1
+            }
+            selected_image="$DEPOT_REGISTRY_HOST/$DEPOT_ACTIONS_RUNNER_REPOSITORY@${upstream_image##*@}"
+            cache_selected=true
+          fi
+
+          {
+            echo "cache_selected=$cache_selected"
+            echo "image=$selected_image"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate pull-through base image
+        if: steps.base_image.outputs.cache_selected == 'true'
+        shell: bash
+        env:
+          DEPOT_REGISTRY_HOST: ${{ vars.DEPOT_REGISTRY_HOST }}
+        run: |
+          set -euo pipefail
+          depot pull-token --project "$DEPOT_PROJECT_ID" |
+            docker login "$DEPOT_REGISTRY_HOST" --username x-token --password-stdin
+
       - name: Log in to GHCR for candidate staging
         if: inputs.execution_mode != 'validate'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -187,6 +247,7 @@ jobs:
             io.mesh-llm.source.revision=${{ inputs.mesh_revision }}
             io.mesh-llm.runner-images.revision=${{ inputs.runner_images_revision }}
           build-args: |
+            ACTIONS_RUNNER_BASE_IMAGE=${{ steps.base_image.outputs.image }}
             BACKEND=${{ inputs.backend_name }}
             RUNNER_ENVIRONMENT=${{ inputs.environment }}
             MESH_LLM_REVISION=${{ inputs.mesh_revision }}

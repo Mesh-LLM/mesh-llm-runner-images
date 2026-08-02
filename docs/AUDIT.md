@@ -47,3 +47,10 @@ The public and self-hosted variants intentionally receive the same project manif
 | ROCm 7.0/7.2 | yes | no | HIP compiler, HIP/rocBLAS headers and libraries |
 
 Every backend has a `public` job-container target and a `self-hosted` target. The latter adds the GitHub Actions runner. Building a GPU image verifies its compiler and SDK contract but does not imply that a consumer exposes matching GPU hardware.
+
+The only container base pulled by this repository is the digest-pinned
+`ghcr.io/actions/actions-runner` image. CUDA and ROCm are installed from vendor
+package repositories, not CUDA/ROCm container bases, so a registry
+pull-through cache cannot accelerate those installer or compilation steps.
+Trusted stage/promotion builds may mirror the Actions runner base through Depot
+only under the measured opt-in contract in `docs/OPERATIONS.md`.

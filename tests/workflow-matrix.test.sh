@@ -248,6 +248,8 @@ stage_families_job="$temporary_directory/stage-families-job.yml"
 build_platform_job="$temporary_directory/build-platform-job.yml"
 assemble_family_index_job="$temporary_directory/assemble-family-index-job.yml"
 depot_config_step="$temporary_directory/depot-config-step.yml"
+base_image_step="$temporary_directory/base-image-step.yml"
+base_image_login_step="$temporary_directory/base-image-login-step.yml"
 trust_boundary_step="$temporary_directory/trust-boundary-step.yml"
 depot_build_step="$temporary_directory/depot-build-step.yml"
 staged_digest_verification_step="$temporary_directory/staged-digest-verification-step.yml"
@@ -260,6 +262,10 @@ extract_step_block "$policy_job" \
   'Validate Depot remote builder configuration' "$depot_config_step"
 extract_step_block "$build_platform_job" \
   'Enforce reusable workflow trust boundary' "$trust_boundary_step"
+extract_step_block "$build_platform_job" \
+  'Select Actions runner base image' "$base_image_step"
+extract_step_block "$build_platform_job" \
+  'Authenticate pull-through base image' "$base_image_login_step"
 extract_step_block "$build_platform_job" \
   'Build platform image once' "$depot_build_step"
 extract_step_block "$build_platform_job" \
@@ -315,9 +321,23 @@ grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$build_platform_job"
 grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$trust_boundary_step"
 grep -Fq 'depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461' \
   "$build_platform_job"
+grep -Fq "CACHE_ENABLED: \${{ vars.DEPOT_REGISTRY_CACHE_ENABLED }}" \
+  "$base_image_step"
+grep -Fq "github/workflows/build-and-push.yml@refs/heads/main" \
+  "$base_image_step"
+grep -Fq 'DEPOT_ACTIONS_RUNNER_REPOSITORY is invalid' "$base_image_step"
+grep -Fq "depot pull-token --project \"\$DEPOT_PROJECT_ID\"" \
+  "$base_image_login_step"
+grep -Fq 'steps.base_image.outputs.cache_selected' "$base_image_login_step"
+if grep -Eq 'secrets\.|DEPOT_TOKEN|REGISTRY_PULL_TOKEN' "$base_image_login_step"; then
+  echo "pull-through login persists or consumes a long-lived token" >&2
+  exit 1
+fi
 grep -Fq 'depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287' \
   "$depot_build_step"
 grep -Fq "project: \${{ env.DEPOT_PROJECT_ID }}" "$depot_build_step"
+grep -Fq "ACTIONS_RUNNER_BASE_IMAGE=\${{ steps.base_image.outputs.image }}" \
+  "$depot_build_step"
 if grep -Eq 'docker/build-push-action|type=gha' "$depot_build_step"; then
   echo "reusable workflow bypasses Depot's persistent project cache" >&2
   exit 1

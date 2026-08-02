@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG BACKEND=cpu
+ARG ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
 
 # Base image = official GitHub Actions runner image. Pinned by digest;
 # the digest corresponds to the upstream `latest` tag at the time of this
@@ -14,7 +15,7 @@ ARG BACKEND=cpu
 #   - ENTRYPOINT=[], CMD=[/bin/bash], WORKDIR=/home/runner.
 # Known-good reference digest (mirrors `latest` as of July 2026):
 #   sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
-FROM ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda AS toolchain
+FROM ${ACTIONS_RUNNER_BASE_IMAGE} AS toolchain
 
 ARG TARGETARCH
 ARG RUNNER_ENVIRONMENT=public

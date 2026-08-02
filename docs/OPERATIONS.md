@@ -46,6 +46,41 @@ The checked-in project ID is configuration, not a credential. OIDC is the
 authorization boundary; do not add a long-lived `DEPOT_TOKEN` unless OIDC is
 unavailable and a separate security review approves the exception.
 
+## Depot Registry pull-through base
+
+The Dockerfile's canonical default remains the digest-pinned
+`ghcr.io/actions/actions-runner` image. Trusted `stage` and `promote` builds can
+opt into a Depot pull-through repository for that one upstream repository.
+Validation mode, pull requests, feature refs, tags, and untrusted callers always
+use the upstream reference.
+
+Depot pull-through repositories are one-to-one with upstream repositories. In
+the Depot dashboard, configure `https://ghcr.io` as an upstream registry, then
+create a pull-through repository whose upstream path is
+`actions/actions-runner`. Record only its relative Depot repository name.
+Before enablement, use MeshLLM's `depot-registry-canary.yml` from `main` to
+compare this exact digest over five fresh runners per source. Enable it only if
+the retained result proves identical digests plus at least 20% and 10 seconds
+of median pull improvement.
+
+Required repository variables:
+
+- `DEPOT_REGISTRY_CACHE_ENABLED`: exact `true` enables the mirror for trusted
+  staging/promotion; any other value selects GHCR.
+- `DEPOT_REGISTRY_HOST`: the organization host in the form
+  `<org-id>.registry.depot.dev`.
+- `DEPOT_ACTIONS_RUNNER_REPOSITORY`: the relative pull-through repository name.
+
+No registry secret is stored. The trusted job exchanges its existing Depot
+OIDC identity for a short-lived, read-only `depot pull-token`, authenticates the
+Docker client, and lets the remote builder consume that credential. The
+Dockerfile keeps the exact upstream manifest digest in either reference.
+
+To roll back immediately, set `DEPOT_REGISTRY_CACHE_ENABLED=false` or remove
+the variable. This optimization affects only base-image transfer on a cache
+miss. It does not accelerate apt repositories, manifest warming, Cargo,
+pnpm/npm, CUDA/ROCm installer downloads, native compilation, or layer export.
+
 ## Depot runner rollout gate
 
 The policy job always runs on GitHub-hosted `ubuntu-24.04` and emits the tested downstream runner selection. Pull requests always use native GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm`. Trusted calls use Depot only when every condition holds:
