@@ -24,7 +24,21 @@ The YAML profiles use a deliberately small schema (`schema`, `profile`, and `apt
 
 ### Base image
 
-The toolchain stage builds `FROM ghcr.io/actions/actions-runner:latest` (pinned by digest in the Dockerfile), which provides the GitHub Actions runner agent, the `runner` user (uid 1001), the `docker` group (gid 123), `/usr/bin/docker` (Docker CLI, no daemon), and Node 20 + 24 runtimes under `/home/runner/externals/node{20,24}/bin`. `scripts/install-core-tools.sh` wires Node from these externals into `/usr/local/bin` instead of installing Node from an apt repository; `docker-ce-cli` is no longer apt-installed because the base already ships a compatible Docker client.
+The toolchain stage builds from `ACTIONS_RUNNER_BASE_IMAGE`, whose default is
+`ghcr.io/actions/actions-runner:latest` pinned by digest in the Dockerfile. It
+provides the GitHub Actions runner agent, the `runner` user (uid 1001), the
+`docker` group (gid 123), `/usr/bin/docker` (Docker CLI, no daemon), and Node 20
+and 24 runtimes under `/home/runner/externals/node{20,24}/bin`.
+`scripts/install-core-tools.sh` wires Node from these externals into
+`/usr/local/bin` instead of installing Node from an apt repository;
+`docker-ce-cli` is no longer apt-installed because the base already ships a
+compatible Docker client.
+
+Trusted staging/promotion may replace only the registry/repository portion with
+a Depot Registry pull-through mirror while retaining the exact upstream digest.
+The opt-in gate, repository mapping, short-lived pull-token authentication, and
+rollback procedure are documented in `docs/OPERATIONS.md`. Validation and pull
+request builds always use the canonical upstream reference.
 
 Both final stages provision the GitHub Actions root-system conventions required when the image is used as a job `container:` (DinD sidecar, rootless Podman, or any setup where the runner cannot rely on kubelet bind mounts):
 
@@ -42,6 +56,7 @@ scripts/prepare-build-context.sh /Users/ndizazzo/dev/mesh/mesh-llm
 docker buildx build \
   --platform linux/amd64 \
   --target public \
+  --build-arg ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda \
   --build-arg BACKEND=cpu \
   --build-arg RUNNER_ENVIRONMENT=public \
   --build-arg MESH_LLM_REVISION="$(git -C /Users/ndizazzo/dev/mesh/mesh-llm rev-parse HEAD)" \

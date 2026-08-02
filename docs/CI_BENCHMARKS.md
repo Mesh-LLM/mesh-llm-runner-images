@@ -74,6 +74,14 @@ that record to `depot list builds`, whose duration is the authoritative Depot
 build duration. GitHub action duration remains orchestration-overhead evidence,
 not a substitute for the Depot build record.
 
+Depot Registry pull-through caching is deliberately evaluated after this
+remote BuildKit cache. The Actions runner base is normally already present in
+the persistent builder cache, so a mirror helps only on a real base-image cache
+miss or builder replacement. Use the fresh-runner canary and the 20% plus
+10-second median gate in `docs/OPERATIONS.md`; do not infer benefit from a warm
+BuildKit run. Pull-through results say nothing about apt, Cargo, pnpm/npm,
+CUDA/ROCm installation, native compilation, or layer export.
+
 Populate this table only with successful runs from the migration commit and a
 verified cache-state classification. Label a run cold only when the project was
 new or empty immediately before it, or when independent Depot evidence proves
