@@ -23,7 +23,7 @@ download_verified() {
     else
       expected_sha="$(awk 'NR == 1 { print $1 }' "$checksum_path")"
     fi
-    if [[ -n "$expected_sha" ]] \
+    if [[ "$expected_sha" =~ ^[[:xdigit:]]{64}$ ]] \
         && printf '%s  %s\n' "$expected_sha" "$archive_path" | sha256sum -c - >/dev/null 2>&1; then
       return 0
     fi
@@ -43,7 +43,7 @@ download_verified() {
   else
     expected_sha="$(awk 'NR == 1 { print $1 }' "$checksum_tmp")"
   fi
-  if [[ -z "$expected_sha" ]] \
+  if [[ ! "$expected_sha" =~ ^[[:xdigit:]]{64}$ ]] \
       || ! printf '%s  %s\n' "$expected_sha" "$archive_tmp" | sha256sum -c -; then
     rm -f "$archive_tmp" "$checksum_tmp"
     return 1
