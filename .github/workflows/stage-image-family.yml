@@ -166,6 +166,7 @@ jobs:
           CACHE_ENABLED: ${{ vars.DEPOT_REGISTRY_CACHE_ENABLED }}
           DEPOT_ACTIONS_RUNNER_REPOSITORY: ${{ vars.DEPOT_ACTIONS_RUNNER_REPOSITORY }}
           DEPOT_REGISTRY_HOST: ${{ vars.DEPOT_REGISTRY_HOST }}
+          DEPOT_RUNNERS_ENABLED: ${{ vars.DEPOT_RUNNERS_ENABLED }}
           EVENT_NAME: ${{ github.event_name }}
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           REPOSITORY: ${{ github.repository }}
@@ -179,6 +180,10 @@ jobs:
           cache_selected=false
 
           if [[ "$CACHE_ENABLED" == true && "$EXECUTION_MODE" != validate ]]; then
+            [[ "$DEPOT_RUNNERS_ENABLED" == true ]] || {
+              echo "pull-through base requires a pre-authenticated Depot runner" >&2
+              exit 1
+            }
             expected_repository=Mesh-LLM/mesh-llm-runner-images
             expected_workflow="$expected_repository/.github/workflows/build-and-push.yml@refs/heads/main"
             [[ "$REPOSITORY" == "$expected_repository" &&
@@ -208,16 +213,6 @@ jobs:
             echo "cache_selected=$cache_selected"
             echo "image=$selected_image"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Authenticate pull-through base image
-        if: steps.base_image.outputs.cache_selected == 'true'
-        shell: bash
-        env:
-          DEPOT_REGISTRY_HOST: ${{ vars.DEPOT_REGISTRY_HOST }}
-        run: |
-          set -euo pipefail
-          depot pull-token --project "$DEPOT_PROJECT_ID" |
-            docker login "$DEPOT_REGISTRY_HOST" --username x-token --password-stdin
 
       - name: Log in to GHCR for candidate staging
         if: inputs.execution_mode != 'validate'

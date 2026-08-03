@@ -249,7 +249,6 @@ build_platform_job="$temporary_directory/build-platform-job.yml"
 assemble_family_index_job="$temporary_directory/assemble-family-index-job.yml"
 depot_config_step="$temporary_directory/depot-config-step.yml"
 base_image_step="$temporary_directory/base-image-step.yml"
-base_image_login_step="$temporary_directory/base-image-login-step.yml"
 trust_boundary_step="$temporary_directory/trust-boundary-step.yml"
 depot_build_step="$temporary_directory/depot-build-step.yml"
 staged_digest_verification_step="$temporary_directory/staged-digest-verification-step.yml"
@@ -264,8 +263,6 @@ extract_step_block "$build_platform_job" \
   'Enforce reusable workflow trust boundary' "$trust_boundary_step"
 extract_step_block "$build_platform_job" \
   'Select Actions runner base image' "$base_image_step"
-extract_step_block "$build_platform_job" \
-  'Authenticate pull-through base image' "$base_image_login_step"
 extract_step_block "$build_platform_job" \
   'Build platform image once' "$depot_build_step"
 extract_step_block "$build_platform_job" \
@@ -323,18 +320,15 @@ grep -Fq 'depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461' \
   "$build_platform_job"
 grep -Fq "CACHE_ENABLED: \${{ vars.DEPOT_REGISTRY_CACHE_ENABLED }}" \
   "$base_image_step"
+grep -Fq "DEPOT_RUNNERS_ENABLED: \${{ vars.DEPOT_RUNNERS_ENABLED }}" \
+  "$base_image_step"
 grep -Fq "github/workflows/build-and-push.yml@refs/heads/main" \
   "$base_image_step"
 grep -Fq 'DEPOT_ACTIONS_RUNNER_REPOSITORY is invalid' "$base_image_step"
-grep -Fq "depot pull-token --project \"\$DEPOT_PROJECT_ID\"" \
-  "$base_image_login_step"
-grep -Fq "if: steps.base_image.outputs.cache_selected == 'true'" \
-  "$base_image_login_step"
-grep -Fq \
-  "docker login \"\$DEPOT_REGISTRY_HOST\" --username x-token --password-stdin" \
-  "$base_image_login_step"
-if grep -Eq 'secrets\.|DEPOT_TOKEN|REGISTRY_PULL_TOKEN' "$base_image_login_step"; then
-  echo "pull-through login persists or consumes a long-lived token" >&2
+grep -Fq 'pull-through base requires a pre-authenticated Depot runner' \
+  "$base_image_step"
+if grep -Eq 'secrets\.|DEPOT_TOKEN|REGISTRY_PULL_TOKEN|depot pull-token|docker login.*DEPOT_REGISTRY_HOST' "$build_platform_job"; then
+  echo "pull-through cache bypasses native Depot runner authentication" >&2
   exit 1
 fi
 grep -Fq 'depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287' \

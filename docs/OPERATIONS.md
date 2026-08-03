@@ -71,10 +71,12 @@ Required repository variables:
   `<org-id>.registry.depot.dev`.
 - `DEPOT_ACTIONS_RUNNER_REPOSITORY`: the relative pull-through repository name.
 
-No registry secret is stored. The trusted job exchanges its existing Depot
-OIDC identity for a short-lived, read-only `depot pull-token`, authenticates the
-Docker client, and lets the remote builder consume that credential. The
-Dockerfile keeps the exact upstream manifest digest in either reference.
+No registry secret is stored. Depot pre-authenticates each trusted Actions job
+to pull the organization's Registry images with a short-lived runner
+credential. Cache selection therefore also requires
+`DEPOT_RUNNERS_ENABLED=true`; the workflow rejects a cached reference on a
+GitHub-hosted runner. The Dockerfile keeps the exact upstream manifest digest
+in either reference.
 
 To roll back immediately, set `DEPOT_REGISTRY_CACHE_ENABLED=false` or remove
 the variable. This optimization affects only base-image transfer on a cache
