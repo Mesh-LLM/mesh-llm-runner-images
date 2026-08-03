@@ -82,6 +82,14 @@ miss or builder replacement. Use the fresh-runner canary and the 20% plus
 BuildKit run. Pull-through results say nothing about apt, Cargo, pnpm/npm,
 CUDA/ROCm installation, native compilation, or layer export.
 
+The first valid five-versus-five pull-through cohort was
+[run 30776030734](https://github.com/Mesh-LLM/mesh-llm/actions/runs/30776030734)
+on 2026-08-02. For Actions runner digest
+`sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda`,
+the upstream GHCR median was 12.055 seconds and the Depot median was 12.047
+seconds: an 8 millisecond (0.1%) improvement. This fails both adoption
+thresholds, so `DEPOT_REGISTRY_CACHE_ENABLED` remains `false`.
+
 Populate this table only with successful runs from the migration commit and a
 verified cache-state classification. Label a run cold only when the project was
 new or empty immediately before it, or when independent Depot evidence proves
