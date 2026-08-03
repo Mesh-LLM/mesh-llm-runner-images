@@ -126,6 +126,12 @@ GitHub-hosted runners, but their Docker builds still execute remotely in Depot.
 Public fork builds use Depot's automatic isolated-build behavior. Authorized
 same-repository builds share the project's persistent BuildKit cache; cache
 reuse is content-addressed and no branch-specific `type=gha` scopes remain.
+The first migration measurements did not establish a cost-versus-latency case
+for a larger native runner, a new bake group, a matrix concurrency cap, or a
+public/self-hosted/backend project split. Keep the checked-in 16-vCPU native
+labels and existing job allocation until a matched warm comparison includes
+Depot billed minutes and independent CPU/memory evidence; do not tune by wall
+time alone.
 The validated `canary_id` is retained as a correlation label in run summaries,
 but sequence does not establish cache state. A validation may be labeled cold
 only when the Depot project is new or empty immediately beforehand, or when

@@ -250,6 +250,7 @@ assemble_family_index_job="$temporary_directory/assemble-family-index-job.yml"
 depot_config_step="$temporary_directory/depot-config-step.yml"
 base_image_step="$temporary_directory/base-image-step.yml"
 trust_boundary_step="$temporary_directory/trust-boundary-step.yml"
+context_measurement_step="$temporary_directory/context-measurement-step.yml"
 depot_build_step="$temporary_directory/depot-build-step.yml"
 staged_digest_verification_step="$temporary_directory/staged-digest-verification-step.yml"
 extract_job_block "$workflow" policy "$policy_job"
@@ -263,6 +264,8 @@ extract_step_block "$build_platform_job" \
   'Enforce reusable workflow trust boundary' "$trust_boundary_step"
 extract_step_block "$build_platform_job" \
   'Select Actions runner base image' "$base_image_step"
+extract_step_block "$build_platform_job" \
+  'Measure Docker build context' "$context_measurement_step"
 extract_step_block "$build_platform_job" \
   'Build platform image once' "$depot_build_step"
 extract_step_block "$build_platform_job" \
@@ -279,6 +282,9 @@ grep -Fqx "          fetch-depth: \${{ github.event_name == 'pull_request' && '0
 grep -Fxq '      DEPOT_PROJECT_ID: mzm95zcv7p' "$policy_job"
 grep -Fq "[[ \"\$DEPOT_PROJECT_ID\" == mzm95zcv7p ]]" "$depot_config_step"
 grep -Fq 'unexpected checked-in Depot project ID' "$depot_config_step"
+grep -Fq 'scripts/measure-docker-context.sh .' "$context_measurement_step"
+grep -Fq 'Upload duration: unavailable from the build action' \
+  "$context_measurement_step"
 if grep -Eq 'should_publish|inputs\.push' "$workflow"; then
   echo "workflow conflates candidate staging and alias promotion" >&2
   exit 1
@@ -354,6 +360,12 @@ if grep -Fq 'docker buildx build' "$staged_digest_verification_step"; then
   exit 1
 fi
 grep -Fq 'Upload Depot build record' "$build_platform_job"
+grep -Fq "CONTEXT_BYTES: \${{ steps.context.outputs.content_bytes }}" \
+  "$build_platform_job"
+grep -Fq "CONTEXT_FILE_COUNT: \${{ steps.context.outputs.file_count }}" \
+  "$build_platform_job"
+grep -Fq 'upload_seconds: null' "$build_platform_job"
+grep -Fq 'boundary: "repository-shared"' "$build_platform_job"
 grep -Fxq '      contents: read' "$validate_families_job"
 grep -Fxq '      id-token: write' "$validate_families_job"
 grep -Fxq '      contents: read' "$stage_families_job"

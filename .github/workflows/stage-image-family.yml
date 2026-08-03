@@ -222,6 +222,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - name: Measure Docker build context
+        id: context
+        shell: bash
+        run: |
+          set -euo pipefail
+          context_metrics="$(scripts/measure-docker-context.sh .)"
+          echo "content_bytes=$(jq -er '.content_bytes' <<< "$context_metrics")" \
+            >> "$GITHUB_OUTPUT"
+          echo "file_count=$(jq -er '.file_count' <<< "$context_metrics")" \
+            >> "$GITHUB_OUTPUT"
+          {
+            echo "## Depot build context"
+            echo
+            jq -r '"- Content bytes: \(.content_bytes)\n- Files: \(.file_count)\n- Upload duration: unavailable from the build action"' \
+              <<< "$context_metrics"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Start Depot build timer
         id: build_timer
         shell: bash
@@ -266,6 +283,11 @@ jobs:
           EXECUTION_MODE: ${{ inputs.execution_mode }}
           PLATFORM: ${{ matrix.platform }}
           PLATFORM_ID: ${{ matrix.platform_id }}
+          CONTEXT_BYTES: ${{ steps.context.outputs.content_bytes }}
+          CONTEXT_FILE_COUNT: ${{ steps.context.outputs.file_count }}
+          JOB_NAME: ${{ github.job }}
+          RUNNER_ARCH: ${{ runner.arch }}
+          RUNNER_OS: ${{ runner.os }}
           STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
         run: |
           set -euo pipefail
@@ -273,6 +295,16 @@ jobs:
             elapsed_seconds="$(( $(date +%s) - STARTED_AT ))"
           else
             elapsed_seconds=unavailable
+          fi
+          if [[ "$CONTEXT_BYTES" =~ ^[0-9]+$ ]]; then
+            context_bytes_json="$CONTEXT_BYTES"
+          else
+            context_bytes_json=null
+          fi
+          if [[ "$CONTEXT_FILE_COUNT" =~ ^[0-9]+$ ]]; then
+            context_file_count_json="$CONTEXT_FILE_COUNT"
+          else
+            context_file_count_json=null
           fi
           if [[ "$BUILD_OUTCOME" == success ]]; then
             [[ -n "$BUILD_ID" ]]
@@ -289,6 +321,11 @@ jobs:
             --arg mode "$EXECUTION_MODE" \
             --arg outcome "$BUILD_OUTCOME" \
             --arg canary_id "$CANARY_ID" \
+            --arg job_name "$JOB_NAME" \
+            --arg runner_arch "$RUNNER_ARCH" \
+            --arg runner_os "$RUNNER_OS" \
+            --argjson context_content_bytes "$context_bytes_json" \
+            --argjson context_file_count "$context_file_count_json" \
             --arg github_run_id "$GITHUB_RUN_ID" \
             --arg github_run_attempt "$GITHUB_RUN_ATTEMPT" \
             --argjson action_elapsed_seconds \
@@ -304,6 +341,21 @@ jobs:
               mode: $mode,
               outcome: $outcome,
               canary_id: $canary_id,
+              job_name: $job_name,
+              runner: {
+                os: $runner_os,
+                arch: $runner_arch
+              },
+              context: {
+                content_bytes: $context_content_bytes,
+                file_count: $context_file_count,
+                upload_seconds: null
+              },
+              cache: {
+                project_id: $project_id,
+                boundary: "repository-shared",
+                import_export: "depot-persistent"
+              },
               github_run_id: $github_run_id,
               github_run_attempt: $github_run_attempt,
               action_elapsed_seconds: $action_elapsed_seconds
