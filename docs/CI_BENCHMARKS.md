@@ -336,6 +336,24 @@ Linux runners at an 8x minute multiplier and the 4-vCPU runner at 2x. See
 Depot's [runner type and billing table](https://depot.dev/docs/github-actions/runner-types)
 and [container-build metrics guide](https://depot.dev/docs/container-builds/observability/container-build-metrics).
 
+## Build-context measurement for future tuning
+
+The reusable staging workflow now records each native row's Docker context
+content-byte estimate and file count, together with runner OS/architecture,
+Depot build/project IDs, and the shared cache boundary. The build action does
+not expose context-upload duration or cache import/export duration separately,
+so those fields remain explicitly unavailable rather than inferred from total
+action time. These records provide the join keys for future per-architecture
+and per-backend timing and cost comparisons.
+
+For a pull_request run whose head repository differs from
+Mesh-LLM/mesh-llm-runner-images, the record uses
+cache.boundary=public-fork-isolated. Trusted same-repository pull requests
+and main-branch, scheduled, or manually dispatched runs use
+cache.boundary=repository-shared. The boundary is a measurement identity
+for Depot cache access and keeps public-fork observations separate from the
+repository's trusted cache population.
+
 ## Depot rollout and no-regression protocol
 
 For the first gated pull request, trusted validation canary, and staged publish
