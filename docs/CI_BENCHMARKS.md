@@ -346,6 +346,14 @@ so those fields remain explicitly unavailable rather than inferred from total
 action time. These records provide the join keys for future per-architecture
 and per-backend timing and cost comparisons.
 
+For a pull_request run whose head repository differs from
+Mesh-LLM/mesh-llm-runner-images, the record uses
+cache.boundary=public-fork-isolated. Trusted same-repository pull requests
+and main-branch, scheduled, or manually dispatched runs use
+cache.boundary=repository-shared. The boundary is a measurement identity
+for Depot cache access and keeps public-fork observations separate from the
+repository's trusted cache population.
+
 ## Depot rollout and no-regression protocol
 
 For the first gated pull request, trusted validation canary, and staged publish

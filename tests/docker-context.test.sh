@@ -23,4 +23,15 @@ jq -e \
   '.schema == 1 and .content_bytes == $expected_bytes and .file_count == 5' \
   <<< "$metrics" >/dev/null
 
+mkdir -p \
+  "$temporary_directory/incomplete/scripts" \
+  "$temporary_directory/incomplete/build-context"
+printf 'dockerfile' > "$temporary_directory/incomplete/Dockerfile"
+printf 'verify' > "$temporary_directory/incomplete/Dockerfile.verify"
+if bash "$measure_context" "$temporary_directory/incomplete" \
+  >/dev/null 2>&1; then
+  echo "expected missing context directory to fail" >&2
+  exit 1
+fi
+
 echo "Docker context measurement contract passed"

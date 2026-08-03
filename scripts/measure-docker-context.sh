@@ -14,14 +14,15 @@ context_files=(
   "$repository_root/Dockerfile"
   "$repository_root/Dockerfile.verify"
 )
+context_listing="$(mktemp)"
+trap 'rm -f "$context_listing"' EXIT
+find "$repository_root/profiles" \
+  "$repository_root/scripts" \
+  "$repository_root/build-context" \
+  -type f -print0 > "$context_listing"
 while IFS= read -r -d '' path; do
   context_files+=("$path")
-done < <(
-  find "$repository_root/profiles" \
-    "$repository_root/scripts" \
-    "$repository_root/build-context" \
-    -type f -print0 2>/dev/null
-)
+done < "$context_listing"
 
 content_bytes=0
 file_count=0

@@ -286,6 +286,7 @@ jobs:
           CONTEXT_BYTES: ${{ steps.context.outputs.content_bytes }}
           CONTEXT_FILE_COUNT: ${{ steps.context.outputs.file_count }}
           JOB_NAME: ${{ github.job }}
+          IS_PUBLIC_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
           RUNNER_ARCH: ${{ runner.arch }}
           RUNNER_OS: ${{ runner.os }}
           STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
@@ -310,6 +311,11 @@ jobs:
             [[ -n "$BUILD_ID" ]]
             [[ "$ACTUAL_DEPOT_PROJECT_ID" == "$DEPOT_PROJECT_ID" ]]
           fi
+          if [[ "$IS_PUBLIC_FORK" == true ]]; then
+            cache_boundary="public-fork-isolated"
+          else
+            cache_boundary="repository-shared"
+          fi
           metrics_file="$RUNNER_TEMP/depot-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${PLATFORM//\//-}.json"
           jq -n \
             --arg build_id "$BUILD_ID" \
@@ -322,6 +328,7 @@ jobs:
             --arg outcome "$BUILD_OUTCOME" \
             --arg canary_id "$CANARY_ID" \
             --arg job_name "$JOB_NAME" \
+            --arg cache_boundary "$cache_boundary" \
             --arg runner_arch "$RUNNER_ARCH" \
             --arg runner_os "$RUNNER_OS" \
             --argjson context_content_bytes "$context_bytes_json" \
@@ -353,7 +360,7 @@ jobs:
               },
               cache: {
                 project_id: $project_id,
-                boundary: "repository-shared",
+                boundary: $cache_boundary,
                 import_export: "depot-persistent"
               },
               github_run_id: $github_run_id,

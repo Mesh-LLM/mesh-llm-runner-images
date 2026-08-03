@@ -365,7 +365,11 @@ grep -Fq "CONTEXT_BYTES: \${{ steps.context.outputs.content_bytes }}" \
 grep -Fq "CONTEXT_FILE_COUNT: \${{ steps.context.outputs.file_count }}" \
   "$build_platform_job"
 grep -Fq 'upload_seconds: null' "$build_platform_job"
-grep -Fq 'boundary: "repository-shared"' "$build_platform_job"
+grep -Fq "IS_PUBLIC_FORK: \${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}" \
+  "$build_platform_job"
+grep -Fq 'cache_boundary="public-fork-isolated"' "$build_platform_job"
+grep -Fq 'cache_boundary="repository-shared"' "$build_platform_job"
+grep -Fq 'boundary: $cache_boundary' "$build_platform_job"
 grep -Fxq '      contents: read' "$validate_families_job"
 grep -Fxq '      id-token: write' "$validate_families_job"
 grep -Fxq '      contents: read' "$stage_families_job"
