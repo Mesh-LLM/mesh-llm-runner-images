@@ -369,7 +369,7 @@ grep -Fq "IS_PUBLIC_FORK: \${{ github.event_name == 'pull_request' && github.eve
   "$build_platform_job"
 grep -Fq 'cache_boundary="public-fork-isolated"' "$build_platform_job"
 grep -Fq 'cache_boundary="repository-shared"' "$build_platform_job"
-grep -Fq 'boundary: $cache_boundary' "$build_platform_job"
+grep -Fq "boundary: \$cache_boundary" "$build_platform_job"
 grep -Fxq '      contents: read' "$validate_families_job"
 grep -Fxq '      id-token: write' "$validate_families_job"
 grep -Fxq '      contents: read' "$stage_families_job"
