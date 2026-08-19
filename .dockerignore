@@ -1,6 +1,7 @@
 *
 !Dockerfile
 !Dockerfile.verify
+!config/playwright-pin.txt
 !profiles/**
 !scripts/**
 !build-context/**

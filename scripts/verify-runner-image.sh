@@ -7,12 +7,17 @@ expected_revision="${3:-}"
 expected_cuda_series="${4:-}"
 expected_rocm_version="${5:-}"
 expected_runner_images_revision="${6:-}"
+expected_playwright_version="${7:-}"
 actual_environment="$(cat /etc/mesh-runner-environment)"
 actual_backend="$(cat /etc/mesh-runner-backend)"
 actual_revision="$(cat /etc/mesh-llm-revision)"
 actual_cuda_series="$(cat /etc/mesh-runner-cuda-series)"
 actual_rocm_version="$(cat /etc/mesh-runner-rocm-version)"
 actual_runner_images_revision="$(cat /etc/mesh-runner-images-revision)"
+# Only the web backend writes this file (Dockerfile backend-web stage);
+# every other backend reports "none", matching the cuda_series/rocm_version
+# no-op convention above.
+actual_playwright_version="$(cat /etc/mesh-runner-playwright-version 2>/dev/null || echo none)"
 verification_directory="$(mktemp -d)"
 trap 'rm -rf "$verification_directory"' EXIT
 
@@ -66,6 +71,17 @@ if [[ -n "$expected_rocm_version" ]]; then
   }
   if [[ "$actual_rocm_version" != "$expected_rocm_version" ]]; then
     echo "expected ROCm version '$expected_rocm_version', found '$actual_rocm_version'" >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$expected_playwright_version" ]]; then
+  [[ "$expected_playwright_version" == none || "$expected_playwright_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "expected Playwright version must be 'none' or a dotted numeric version" >&2
+    exit 1
+  }
+  if [[ "$actual_playwright_version" != "$expected_playwright_version" ]]; then
+    echo "expected Playwright version '$expected_playwright_version', found '$actual_playwright_version'" >&2
     exit 1
   fi
 fi
@@ -129,6 +145,25 @@ case "$actual_backend" in
     printf '%s\n' '#include <hip/hip_runtime.h>' '__global__ void probe() {}' \
       | hipcc -x hip -c --offload-arch=gfx1100 -o "$verification_directory/probe.o" -
     ;;
+  web)
+    test -n "${PLAYWRIGHT_BROWSERS_PATH:-}"
+    test -d "$PLAYWRIGHT_BROWSERS_PATH"
+    find "$PLAYWRIGHT_BROWSERS_PATH" -mindepth 1 -maxdepth 1 -type d -name 'chromium-*' -print -quit \
+      | grep -q .
+    test -s /etc/mesh-runner-playwright-version
+    # The only check that actually proves `install-deps` installed a
+    # sufficient package set: launch Chromium headless, offline, and close
+    # it. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD stays baked at 1, so a missing or
+    # mismatched browser fails here loudly rather than silently fetching one.
+    node -e '
+      const { chromium } = require("playwright");
+      (async () => {
+        const browser = await chromium.launch({ headless: true });
+        await browser.close();
+        console.log("chromium launch ok");
+      })().catch((error) => { console.error(error.message); process.exit(1); });
+    '
+    ;;
   *) echo "unsupported backend: $actual_backend" >&2; exit 1 ;;
 esac
 
@@ -147,8 +182,9 @@ jq -n \
   --arg runner_images_revision "$actual_runner_images_revision" \
   --arg cuda_series "$actual_cuda_series" \
   --arg rocm_version "$actual_rocm_version" \
+  --arg playwright_version "$actual_playwright_version" \
   --arg cargo "$(cargo --version)" \
   --arg node "$(node --version)" \
   --arg pnpm "$(pnpm --version)" \
   --arg python "$(python --version 2>&1)" \
-  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, runner_images_revision: $runner_images_revision, backend_metadata: {cuda_series: $cuda_series, rocm_version: $rocm_version}, tools: {cargo: $cargo, node: $node, pnpm: $pnpm, python: $python}}'
+  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, runner_images_revision: $runner_images_revision, backend_metadata: {cuda_series: $cuda_series, rocm_version: $rocm_version, playwright_version: $playwright_version}, tools: {cargo: $cargo, node: $node, pnpm: $pnpm, python: $python}}'

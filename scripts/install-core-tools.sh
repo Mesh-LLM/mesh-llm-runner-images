@@ -5,6 +5,7 @@ set -euo pipefail
 : "${NODE_MAJOR:?NODE_MAJOR is required}"
 : "${JUST_VERSION:?JUST_VERSION is required}"
 : "${SCCACHE_VERSION:?SCCACHE_VERSION is required}"
+: "${OPENAI_NPM_VERSION:?OPENAI_NPM_VERSION is required}"
 
 download_cache="${DOWNLOAD_CACHE_DIR:-/var/cache/mesh-downloads}"
 mkdir -p "$download_cache"
@@ -73,6 +74,13 @@ wire_node_from_base() {
     ln -sf "${externals_root}/${binary}" "/usr/local/bin/${binary}"
   done
   npm install --global "pnpm@10"
+  # The last un-baked smoke-test dependency (mesh-llm's smoke.yml and
+  # sdk-smoke.yml `npm install --global openai` steps). Small enough to
+  # belong in the common layer rather than justifying its own backend.
+  # Exact-pinned (not `openai@latest`) so an upstream major bump can't
+  # silently change behavior across a rebuild; bump OPENAI_NPM_VERSION in
+  # the Dockerfile deliberately, same pattern as JUST_VERSION/SCCACHE_VERSION.
+  npm install --global "openai@${OPENAI_NPM_VERSION}"
 }
 
 install_rust() {

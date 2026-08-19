@@ -9,6 +9,7 @@ export DOWNLOAD_CACHE_DIR="$temporary/cache"
 export JUST_VERSION=test
 export NODE_MAJOR=24
 export SCCACHE_VERSION=test
+export OPENAI_NPM_VERSION=test
 export TARGETARCH=amd64
 
 # Load only the cache helper; the remainder installs the full runner toolchain.

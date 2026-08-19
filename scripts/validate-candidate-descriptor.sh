@@ -8,7 +8,7 @@ usage: validate-candidate-descriptor.sh \
   --image IMAGE \
   --environment public|self-hosted \
   --backend-id ID \
-  --backend-name cpu|vulkan|cuda|rocm|mixed \
+  --backend-name cpu|vulkan|cuda|rocm|web|mixed \
   --cuda-series none|MAJOR-MINOR \
   --rocm-version none|VERSION \
   --mesh-revision SHA \
@@ -80,7 +80,7 @@ command -v jq >/dev/null || {
   echo "invalid expected backend id: $expected_backend_id" >&2
   exit 1
 }
-[[ "$expected_backend_name" =~ ^(cpu|vulkan|cuda|rocm|mixed)$ ]] || {
+[[ "$expected_backend_name" =~ ^(cpu|vulkan|cuda|rocm|web|mixed)$ ]] || {
   echo "unsupported expected backend name: $expected_backend_name" >&2
   exit 1
 }
@@ -106,6 +106,7 @@ case "$expected_backend_name" in
   vulkan) [[ "$expected_backend_id" == vulkan && "$expected_cuda_series" == none && "$expected_rocm_version" == none ]] ;;
   cuda) [[ "$expected_backend_id" =~ ^cuda[0-9]+$ && "$expected_cuda_series" != none && "$expected_rocm_version" == none ]] ;;
   rocm) [[ "$expected_backend_id" =~ ^rocm[0-9]+$ && "$expected_cuda_series" == none && "$expected_rocm_version" != none ]] ;;
+  web) [[ "$expected_backend_id" == web && "$expected_cuda_series" == none && "$expected_rocm_version" == none && "$expected_environment" == public ]] ;;
   mixed) [[ "$expected_backend_id" == compatibility && "$expected_cuda_series" == none && "$expected_rocm_version" == none ]] ;;
 esac || {
   echo "expected backend id and metadata are inconsistent" >&2
