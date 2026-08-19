@@ -69,6 +69,21 @@ expect_failure bash "$validator" \
 expect_failure bash "$validator" \
   "${validation_arguments[@]/12-9/none}"
 
+# web is public-only; a self-hosted web candidate must be rejected before
+# the descriptor is even inspected (this is CLI-argument validation, not
+# content validation, so reusing the cuda fixture is fine here).
+expect_failure bash "$validator" \
+  --descriptor "$fixture" \
+  --image "$image" \
+  --environment self-hosted \
+  --backend-id web \
+  --backend-name web \
+  --cuda-series none \
+  --rocm-version none \
+  --mesh-revision "$mesh_revision" \
+  --runner-images-revision "$runner_images_revision" \
+  --architectures amd64
+
 promotion_log="$temporary_directory/promotion.log"
 MOCK_DOCKER_LOG="$promotion_log" \
 MOCK_DOCKER_SOURCE_DIGEST="$digest" \

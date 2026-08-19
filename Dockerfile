@@ -22,6 +22,7 @@ ARG RUNNER_ENVIRONMENT=public
 ARG NODE_MAJOR=24
 ARG JUST_VERSION=1.57.0
 ARG SCCACHE_VERSION=0.16.0
+ARG OPENAI_NPM_VERSION=7.5.0
 
 LABEL org.opencontainers.image.source="https://github.com/Mesh-LLM/mesh-llm-runner-images" \
       org.opencontainers.image.description="Reproducible multi-architecture MeshLLM CI environment" \
@@ -92,6 +93,7 @@ RUN --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-${TARGETARC
     --mount=type=cache,id=mesh-runner-tool-downloads-ubuntu24-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
     chmod 0755 /usr/local/bin/install-core-tools \
     && TARGETARCH="${TARGETARCH}" NODE_MAJOR="${NODE_MAJOR}" JUST_VERSION="${JUST_VERSION}" SCCACHE_VERSION="${SCCACHE_VERSION}" \
+       OPENAI_NPM_VERSION="${OPENAI_NPM_VERSION}" \
        /usr/local/bin/install-core-tools
 
 COPY build-context/manifests/${RUNNER_ENVIRONMENT}/ /opt/mesh-llm/manifests/

@@ -106,7 +106,7 @@ case "$expected_backend_name" in
   vulkan) [[ "$expected_backend_id" == vulkan && "$expected_cuda_series" == none && "$expected_rocm_version" == none ]] ;;
   cuda) [[ "$expected_backend_id" =~ ^cuda[0-9]+$ && "$expected_cuda_series" != none && "$expected_rocm_version" == none ]] ;;
   rocm) [[ "$expected_backend_id" =~ ^rocm[0-9]+$ && "$expected_cuda_series" == none && "$expected_rocm_version" != none ]] ;;
-  web) [[ "$expected_backend_id" == web && "$expected_cuda_series" == none && "$expected_rocm_version" == none ]] ;;
+  web) [[ "$expected_backend_id" == web && "$expected_cuda_series" == none && "$expected_rocm_version" == none && "$expected_environment" == public ]] ;;
   mixed) [[ "$expected_backend_id" == compatibility && "$expected_cuda_series" == none && "$expected_rocm_version" == none ]] ;;
 esac || {
   echo "expected backend id and metadata are inconsistent" >&2
