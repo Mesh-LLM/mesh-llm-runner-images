@@ -62,6 +62,18 @@
       "architectures": [
         "amd64"
       ]
+    },
+    {
+      "id": "web",
+      "name": "web",
+      "cuda_series": null,
+      "rocm_version": null,
+      "architectures": [
+        "amd64"
+      ],
+      "environments": [
+        "public"
+      ]
     }
   ],
   "aliases": [

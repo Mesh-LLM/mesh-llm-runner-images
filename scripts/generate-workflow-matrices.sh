@@ -21,17 +21,34 @@ if ! jq -e '
     and (length > 0)
     and (length == (unique | length))
     and all(.[]; . == "amd64" or . == "arm64");
-  def backend:
+  # Every backend key is required except `environments`, which is optional
+  # and defaults to every family environment when absent (so an existing
+  # descriptor with no `environments` field is byte-identical in behavior).
+  # When present it must be a non-empty, duplicate-free subset of the family
+  # `.environments` — a typo like "pubic" must fail validation loudly rather
+  # than silently produce an empty matrix for that backend.
+  def has_valid_environments_subset($family_environments):
+    (has("environments") | not)
+    or (
+      .environments
+      | type == "array"
+      and (length > 0)
+      and (length == (unique | length))
+      and all(.[]; . as $e | $family_environments | index($e) != null)
+    );
+  def backend($family_environments):
     type == "object"
-    and exact_keys([
+    and ((keys - ["environments"]) | sort) == ([
       "architectures",
       "cuda_series",
       "id",
       "name",
       "rocm_version"
-    ])
+    ] | sort)
+    and (keys - ["architectures", "cuda_series", "environments", "id", "name", "rocm_version"] | length == 0)
+    and (has_valid_environments_subset($family_environments))
     and (.id | identifier)
-    and (.name == "cpu" or .name == "vulkan" or .name == "cuda" or .name == "rocm")
+    and (.name == "cpu" or .name == "vulkan" or .name == "cuda" or .name == "rocm" or .name == "web")
     and (.architectures | architectures)
     and (
       if .name == "cpu" or .name == "vulkan" then
@@ -44,7 +61,7 @@ if ! jq -e '
         and .id == ("cuda" + (.cuda_series | split("-")[0]))
         and .rocm_version == null
         and .architectures == ["amd64", "arm64"]
-      else
+      elif .name == "rocm" then
         .cuda_series == null
         and (.rocm_version | type == "string" and test("^[0-9]+(\\.[0-9]+){1,2}$"))
         and .id == (
@@ -52,6 +69,11 @@ if ! jq -e '
           + (.rocm_version | split(".")[0])
           + (.rocm_version | split(".")[1])
         )
+        and .architectures == ["amd64"]
+      else
+        .id == .name
+        and .cuda_series == null
+        and .rocm_version == null
         and .architectures == ["amd64"]
       end
     );
@@ -87,7 +109,7 @@ if ! jq -e '
   and exact_keys(["aliases", "backends", "environments", "indexes", "schema"])
   and .schema == 1
   and .environments == ["public", "self-hosted"]
-  and (.backends | type == "array" and length > 0 and all(.[]; backend))
+  and (.backends | type == "array" and length > 0 and all(.[]; backend($root.environments)))
   and ([.backends[].id] | length == (unique | length))
   and (.aliases | type == "array" and all(.[]; alias))
   and ([.aliases[] | [.environment, .backend_id]] | length == (unique | length))
@@ -98,6 +120,15 @@ if ! jq -e '
         $root.backends[];
         .id == $alias.backend_id
       )
+  )
+  # An alias must name an environment its own backend actually builds in —
+  # otherwise it could claim e.g. a self-hosted-web alias that the matrix
+  # below (scoped by backend.environments) will never produce.
+  and all(
+    .aliases[];
+    . as $alias
+    | ([$root.backends[] | select(.id == $alias.backend_id)][0]) as $backend
+    | (($backend.environments // $root.environments) | index($alias.environment)) != null
   )
   and (.indexes | type == "array" and all(.[]; index))
   and ([.indexes[].artifact] | length == (unique | length))
@@ -118,15 +149,16 @@ jq -ce '
   def families:
     . as $root
     | [
-        $root.environments[] as $environment
-        | $root.backends[]
+        $root.backends[]
+        | . as $backend
+        | (.environments // $root.environments)[] as $environment
         | {
             environment: $environment,
-            backend_id: .id,
-            backend_name: .name,
-            cuda_series: (.cuda_series // "none"),
-            rocm_version: (.rocm_version // "none"),
-            architectures: (.architectures | join(","))
+            backend_id: $backend.id,
+            backend_name: $backend.name,
+            cuda_series: ($backend.cuda_series // "none"),
+            rocm_version: ($backend.rocm_version // "none"),
+            architectures: ($backend.architectures | join(","))
           }
       ];
 

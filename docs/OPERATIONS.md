@@ -170,3 +170,34 @@ supported platform. If GHCR is private, authenticate before running it.
 
 Restore the previous immutable digest in the owning consumer repository. Do not
 retag an existing image or use a mutable tag as a rollback mechanism.
+
+## Bumping the baked Playwright/Chromium version (`public-web`)
+
+The `web` backend bakes a specific Chromium build, declared once in
+`config/playwright-pin.txt` (currently the `playwright` package version, which
+mesh-llm's pinned `@playwright/test` version always matches exactly — Playwright
+ships those two packages in lockstep). This image is the stable side of that
+pairing: it does not read mesh-llm's lockfile at build time, and mesh-llm does
+not re-derive its pin from this image. Each side asserts the other's value
+independently — `verify-runner-image` checks the baked version against an
+optional expected argument; mesh-llm's `ui_e2e` job checks its own
+`@playwright/test` resolution against `/etc/mesh-runner-playwright-version`
+inside the container before running `pnpm run test:e2e` (see
+`ci-web-slice.yml`).
+
+**Bump order is mandatory and one-directional: this repo first, mesh-llm
+second.**
+
+1. Bump `config/playwright-pin.txt` here, land it, and run this repo's
+   publication order above through `promote` so a new `public-web` digest
+   exists in the registry.
+2. Only then bump `@playwright/test` in `crates/mesh-llm-ui/pnpm-lock.yaml`
+   and the consumed `public-web` digest in mesh-llm, in the same PR.
+
+Doing it in the other order — bumping mesh-llm's lockfile first — leaves
+`ui_e2e`'s preflight version check failing on `main` with no image to point at
+yet; that check is deliberately strict (mode C in the runner-images design:
+it fails loudly on a mismatch rather than letting Playwright silently
+re-download a browser to match its own lockfile, which is exactly the apt
+call this backend exists to remove). If it blocks a bump, the fix is always
+promoting the new `public-web` image, never loosening the check.

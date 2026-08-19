@@ -103,7 +103,7 @@ assert_matrix() {
   jq -e \
     '
       .family_matrix.include as $families
-      | ($families | length) == 12
+      | ($families | length) == 13
       and ([$families[].environment] | unique | sort) == ["public", "self-hosted"]
       and ([$families[].backend_id] | unique | sort) == [
         "cpu",
@@ -111,20 +111,26 @@ assert_matrix() {
         "cuda13",
         "rocm70",
         "rocm72",
-        "vulkan"
+        "vulkan",
+        "web"
       ]
       and all(
         $families[];
-        if .backend_name == "rocm" then
+        if .backend_name == "rocm" or .backend_name == "web" then
           .architectures == "amd64"
         else
           .architectures == "amd64,arm64"
         end
         and (has("platform_matrix") | not)
       )
+      # web is public-only: regression guard for the environment-scoping
+      # mechanism (backend.environments in the descriptor) actually working.
+      and ([$families[] | select(.backend_id == "web")] | length) == 1
+      and ([$families[] | select(.backend_id == "web")][0].environment) == "public"
+      and ([$families[] | select(.backend_id == "web" and .environment == "self-hosted")] | length) == 0
       and (
         .promotion_matrix.include as $promotions
-        | ($promotions | length) == 13
+        | ($promotions | length) == 14
         and ([$promotions[] | select(.backend_id == "compatibility")] | length) == 1
         and ([$promotions[] | select(.compatibility_tag_stem != "")] | length) == 1
         and (
@@ -140,6 +146,7 @@ assert_matrix() {
           "public-rocm70",
           "public-rocm72",
           "public-vulkan",
+          "public-web",
           "self-hosted",
           "self-hosted-cpu",
           "self-hosted-cuda12",
@@ -148,6 +155,7 @@ assert_matrix() {
           "self-hosted-rocm72",
           "self-hosted-vulkan"
         ]
+        and ([$promotions[].tag_stem] | index("self-hosted-web")) == null
       )
     ' <<< "$matrices" >/dev/null
 }
@@ -236,9 +244,14 @@ assert_pr_plan docs/OPERATIONS.md 1 \
   }]'
 assert_pr_plan scripts/install-rocm-toolchain.sh 5 \
   '([.family_matrix.include[] | select(.backend_id | startswith("rocm"))] | length) == 4'
-assert_pr_plan profiles/public.yml 6 \
+assert_pr_plan profiles/backends/web.yml 2 \
+  '([.family_matrix.include[] | select(.backend_id == "web")] | length) == 1'
+assert_pr_plan config/playwright-pin.txt 2 \
+  '([.family_matrix.include[] | select(.backend_id == "web")] | length) == 1
+   and (.selection.exhaustive == false)'
+assert_pr_plan profiles/public.yml 7 \
   'all(.family_matrix.include[]; .environment == "public")'
-assert_pr_plan Dockerfile 12 '.selection.exhaustive == true'
+assert_pr_plan Dockerfile 13 '.selection.exhaustive == true'
 
 workflow="$repository_root/.github/workflows/build-and-push.yml"
 reusable_workflow="$repository_root/.github/workflows/stage-image-family.yml"

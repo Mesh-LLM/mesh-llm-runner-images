@@ -147,6 +147,48 @@ ENV ROCM_PATH=/opt/rocm \
     LD_LIBRARY_PATH=/opt/rocm/lib
 USER runner
 
+FROM toolchain AS backend-web
+
+# Chromium's system dependencies are Playwright's to own, not ours: rather
+# than hand-listing them in profiles/backends/web.yml (which stays an empty
+# apt.packages list, like cpu.yml), `playwright install-deps chromium`
+# derives and installs that list itself at build time. The version baked
+# here is the single declared pin in config/playwright-pin.txt; mesh-llm's
+# ui_e2e job asserts its own @playwright/test resolves to the same string
+# before it trusts this image (see docs/OPERATIONS.md).
+USER root
+ARG TARGETARCH
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    NODE_PATH=/home/runner/externals/node24/lib/node_modules
+COPY config/playwright-pin.txt /tmp/playwright-pin.txt
+# Install the `playwright` package, not `@playwright/test`: mesh-llm's
+# pnpm-lock.yaml pins `@playwright/test`, but that package hard-depends on
+# an identical `playwright` version (checked: @playwright/test@1.62.1
+# depends on "playwright": "1.62.1", no range), so the pin is equivalent
+# either way. `playwright` ships the same install-deps/install CLI and,
+# critically, resolves as a top-level global package under $(npm root -g)
+# instead of nested under @playwright/test/node_modules/playwright — a
+# global `npm install @playwright/test` alone left `require("playwright")`
+# unresolvable from an arbitrary CWD (confirmed with a local build before
+# choosing this), which is what the verify-runner-image launch check below
+# needs. NODE_PATH makes that global install visible to plain `require()`.
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-web-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-web-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-web-${TARGETARCH},target=/root/.npm,sharing=locked \
+    playwright_version="$(cat /tmp/playwright-pin.txt)" \
+    && npm install --global "playwright@${playwright_version}" \
+    && mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= playwright install-deps chromium \
+    && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= playwright install chromium \
+    && find "${PLAYWRIGHT_BROWSERS_PATH}" -mindepth 1 -maxdepth 1 -type d -name 'chromium-*' -print -quit \
+       | xargs -r basename > /etc/mesh-runner-chromium-build \
+    && test -s /etc/mesh-runner-chromium-build \
+    && chown -R runner:docker "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && printf '%s\n' "${playwright_version}" > /etc/mesh-runner-playwright-version \
+    && rm -f /tmp/playwright-pin.txt
+USER runner
+
 ARG BACKEND
 FROM backend-${BACKEND} AS selected-backend
 

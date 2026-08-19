@@ -1,6 +1,6 @@
 # MeshLLM runner images
 
-This repository builds a backend-specialized MeshLLM CI image family from one shared core toolchain. Every backend is available as a GitHub-hosted job container (`public`) and an image containing the GitHub Actions runner (`self-hosted`):
+This repository builds a backend-specialized MeshLLM CI image family from one shared core toolchain. Every native-runtime backend is available as a GitHub-hosted job container (`public`) and an image containing the GitHub Actions runner (`self-hosted`):
 
 - `public-cpu-*` / `self-hosted-cpu-*`
 - `public-vulkan-*` / `self-hosted-vulkan-*`
@@ -11,12 +11,14 @@ This repository builds a backend-specialized MeshLLM CI image family from one sh
 
 CPU, Vulkan, and CUDA tags support `linux/amd64` and `linux/arm64`. ROCm tags are intentionally `linux/amd64` only because that is the currently supported MeshLLM ROCm CI target. The compatibility aliases preserve the existing image contract: `public-*` is CPU on both architectures, while `self-hosted-*` combines CUDA 12 on AMD64 with CPU on ARM64. The existing GHCR package name is retained to avoid a registry and credential migration.
 
+The `web` backend is `public-web-*` only — no `self-hosted-web` exists, since nothing consumes a self-hosted web image today. It is `linux/amd64` only for the same reason. Unlike the native-runtime backends above, `web` bakes a specific Chromium build for MeshLLM's Playwright-based UI end-to-end suite rather than a compiler/runtime toolchain; see "Playwright / Chromium version pin" below.
+
 ## Design
 
 The image has four layers of configuration:
 
 1. `profiles/common.yml` is the shared operating-system toolchain found in MeshLLM CI and build scripts.
-2. `profiles/backends/*.yml` contains CPU, Vulkan, CUDA, or ROCm SDK packages; the owning installer handles vendor repositories and compilers.
+2. `profiles/backends/*.yml` contains CPU, Vulkan, CUDA, ROCm, or Web SDK packages; the owning installer handles vendor repositories and compilers. `web`'s stays an empty `apt.packages` list — Chromium's system dependencies are `playwright install-deps chromium`'s to own, not ours; see below.
 3. `profiles/public.yml` and `profiles/self-hosted.yml` contain environment-only additions.
 4. `scripts/prepare-build-context.sh` checks out the requested MeshLLM revision, discovers its Rust, Node, Python, and Go manifests, and creates one bundle per runner environment. The Docker build injects the matching bundle and warms Cargo, pnpm, npm, and Python dependencies.
 
@@ -47,6 +49,31 @@ Both final stages provision the GitHub Actions root-system conventions required 
 - `/__w`, `/github/home`, `/github/workflow` → directories with mode 0777
 
 The `public` stage bakes these as `USER root` (matching the public-container root convention); the `self-hosted` stage bakes them before restoring `USER runner` so the runner agent's `run.sh` entrypoint still executes with uid 1001. `scripts/verify-runner-image.sh` asserts both the `/__e/node24/bin/node` symlink and its canonical source under `/home/runner/externals/`, plus `docker --version`, so regressions of the `/__e/node24/bin/node: no such file or directory` failure mode are caught at build time.
+
+### Playwright / Chromium version pin (`web`)
+
+`config/playwright-pin.txt` is the single declared source of truth for the
+Chromium build baked into `public-web`. The `backend-web` Dockerfile stage
+installs the `playwright` package at that exact version, runs `playwright
+install-deps chromium` (so Playwright's own dependency list drives apt, not a
+hand-maintained one) and `playwright install chromium` into a fixed
+`PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright`, and records what it actually
+got in `/etc/mesh-runner-playwright-version` and `/etc/mesh-runner-chromium-build`
+(the latter read from the installed browser directory name, not hand-written).
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` is baked as an image env var so a stray
+`pnpm install` postinstall never re-downloads a browser into a running
+container; Playwright hard-errors instead of downloading when a browser is
+missing (`scripts/verify-runner-image.sh`'s `web` case proves this by
+launching Chromium headless, offline, and closing it).
+
+This image is the stable side of the version pairing: it does not read
+MeshLLM's `pnpm-lock.yaml` at build time, and MeshLLM does not re-derive its
+pin from this image. Each side asserts the other's value independently —
+`verify-runner-image` takes an optional expected Playwright version argument,
+and MeshLLM's own CI checks its `@playwright/test` resolution against
+`/etc/mesh-runner-playwright-version` before trusting the image. Bumping the
+pin has a mandatory order (this repo promotes first, MeshLLM bumps its
+lockfile second); see `docs/OPERATIONS.md`.
 
 ## Local build
 

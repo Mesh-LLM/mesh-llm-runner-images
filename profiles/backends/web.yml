@@ -1,0 +1,5 @@
+---
+schema: 1
+profile: web
+apt:
+  packages: []
