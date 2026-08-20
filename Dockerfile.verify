@@ -10,15 +10,31 @@ ARG EXPECTED_MESH_REVISION
 ARG EXPECTED_RUNNER_IMAGES_REVISION
 ARG EXPECTED_CUDA_SERIES=none
 ARG EXPECTED_ROCM_VERSION=none
-ARG EXPECTED_PLAYWRIGHT_VERSION=none
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# The web backend's expected Playwright version is not a caller-supplied
+# build-arg: no caller has ever set one (stage-image-family.yml's
+# EXPECTED_* build-args stop at EXPECTED_ROCM_VERSION), so this ARG's
+# "none" default silently applied to every backend, including web, and
+# always compared equal to itself -- the verify step never actually
+# asserted the baked Chromium against the repo's own pin. Per
+# docs/OPERATIONS.md, the image declares the pin; read it directly from
+# the same checked-in file the backend-web Dockerfile stage bakes from,
+# scoped to the web backend the same way EXPECTED_CUDA_SERIES/
+# EXPECTED_ROCM_VERSION are scoped to their backends.
+COPY config/playwright-pin.txt /tmp/playwright-pin.txt
 
 RUN [[ "${CANDIDATE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]] \
     && test -n "${EXPECTED_ENVIRONMENT}" \
     && test -n "${EXPECTED_BACKEND}" \
     && test -n "${EXPECTED_MESH_REVISION}" \
     && test -n "${EXPECTED_RUNNER_IMAGES_REVISION}" \
+    && if [[ "${EXPECTED_BACKEND}" == web ]]; then \
+         expected_playwright_version="$(cat /tmp/playwright-pin.txt)"; \
+       else \
+         expected_playwright_version=none; \
+       fi \
     && /usr/local/bin/verify-runner-image \
        "${EXPECTED_ENVIRONMENT}" \
        "${EXPECTED_BACKEND}" \
@@ -26,4 +42,4 @@ RUN [[ "${CANDIDATE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]] \
        "${EXPECTED_CUDA_SERIES}" \
        "${EXPECTED_ROCM_VERSION}" \
        "${EXPECTED_RUNNER_IMAGES_REVISION}" \
-       "${EXPECTED_PLAYWRIGHT_VERSION}"
+       "${expected_playwright_version}"
