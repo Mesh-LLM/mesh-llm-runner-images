@@ -175,6 +175,13 @@ COPY config/playwright-pin.txt /tmp/playwright-pin.txt
 # unresolvable from an arbitrary CWD (confirmed with a local build before
 # choosing this), which is what the verify-runner-image launch check below
 # needs. NODE_PATH makes that global install visible to plain `require()`.
+#
+# /etc/mesh-runner-playwright-version is stamped from `playwright --version`
+# (the installed CLI's own report), not re-printed from the pin file: the
+# whole point of Dockerfile.verify's comparison is catching a mismatch
+# between what config/playwright-pin.txt declares and what npm actually
+# resolved and installed. Echoing the pin back to itself would make that
+# assertion unconditionally true.
 RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-web-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-web-${TARGETARCH},target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-web-${TARGETARCH},target=/root/.npm,sharing=locked \
@@ -187,7 +194,8 @@ RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-web-${TARGETARCH},targe
        | xargs -r basename > /etc/mesh-runner-chromium-build \
     && test -s /etc/mesh-runner-chromium-build \
     && chown -R runner:docker "${PLAYWRIGHT_BROWSERS_PATH}" \
-    && printf '%s\n' "${playwright_version}" > /etc/mesh-runner-playwright-version \
+    && playwright --version | awk '{print $NF}' > /etc/mesh-runner-playwright-version \
+    && test -s /etc/mesh-runner-playwright-version \
     && rm -f /tmp/playwright-pin.txt
 USER runner
 
