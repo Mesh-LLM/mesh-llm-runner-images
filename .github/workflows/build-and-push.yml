@@ -139,6 +139,7 @@ jobs:
           tests/cohort-promotion.test.sh
           tests/promotion-tags.test.sh
           tests/workflow-matrix.test.sh
+          tests/docker-context.test.sh
 
       - name: Lint shell sources
         run: |

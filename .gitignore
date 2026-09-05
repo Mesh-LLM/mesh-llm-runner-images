@@ -1,3 +1,4 @@
 .DS_Store
 build-context/manifests/*
 !build-context/manifests/.gitkeep
+.omo

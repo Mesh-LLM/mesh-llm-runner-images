@@ -212,6 +212,41 @@ otherwise establish a pre-Depot control with the same selected matrix. Compare
 main staging to run `30522118156`. Report median and p95 platform-build time in
 addition to totals so one fast family cannot hide a CUDA or ROCm regression.
 
+## Tuning decision after the first Depot measurements
+
+The measured cache effect is strong: the matched public CPU AMD64 canary went
+from a verified-cold 1m 59s Depot build to a verified-warm 1s build, with 18
+cached steps; workflow wall time fell from 3m 02s to 57s and aggregate job time
+from 2m 40s to 35s (lines 121--128). The exhaustive warm main staging run also
+completed all 20 native platform builds, with 4m 03s median, 4m 49s p95, and
+4m 57s slowest Depot build (lines 108--115). Those results support retaining
+the persistent shared project and the current native-platform/assembly split.
+
+They do not justify changing runner size or build parallelism. The repository
+does not contain CPU or memory utilization, Depot billed minutes, a separately
+measured context-upload phase, a cache-hit percentage, or a per-backend
+resource/eviction comparison; Depot CLI 2.101.77 explicitly does not expose
+several of those fields (lines 203--207). The earlier pre-Depot cache-export
+measurement is useful evidence for removing `type=gha` transfer (lines 53--58),
+but is not evidence for a new Depot runner size, bake group, concurrency cap,
+or project split.
+
+| Tuning area | Decision | Evidence boundary |
+|---|---|---|
+| Depot runner labels/sizes | Keep 16-vCPU native labels and the existing smaller orchestration allocation; do not make a larger runner the default. | No measured cost-versus-latency or CPU/memory saturation result is checked in. |
+| Native versus index/assembly jobs | Keep native platform builds separate from index/compatibility assembly and exact-digest verification. | The remote-verification run reduced verification work by 90.9% while retaining exact-digest and every index assembly (lines 108--115). |
+| Bake groups | Do not introduce `depot bake` grouping yet. | There is no cold multi-target comparison or per-target resource measurement, and the warm matrix already shows shared-layer reuse. |
+| Matrix concurrency | Do not add a speculative `max-parallel` cap. | The available wall/build totals do not identify builder saturation or a cost saving from fewer concurrent rows. |
+| Cache project boundaries | Keep the checked-in project `mzm95zcv7p` shared by trusted repository builds. | All 20 warm primary rows reused relevant layers; no per-family hit, eviction, or contention data supports splitting public/self-hosted or backend caches. Public-fork isolation remains Depot's separate-build boundary. |
+
+Each native row now records the target platform/backend, host runner OS and
+architecture, the current shared-cache policy, and a content-byte estimate for
+the files allowed by `.dockerignore`. The estimate is deliberately not called
+upload time: the workflow records `context.upload_seconds: null` because the
+build action does not expose that phase separately. The existing Depot build ID
+and action elapsed time remain the join keys for later per-architecture and
+per-backend analysis.
+
 ## Depot rollout and no-regression protocol
 
 For the first gated pull request, trusted validation canary, and staged publish
