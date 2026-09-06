@@ -249,6 +249,10 @@ assert_pr_plan docs/OPERATIONS.md 1 \
   }]'
 assert_pr_plan scripts/install-rocm-toolchain.sh 5 \
   '([.family_matrix.include[] | select(.backend_id | startswith("rocm"))] | length) == 4'
+assert_pr_plan scripts/verify-vulkan-device.sh 7 \
+  '([.family_matrix.include[] | select(.backend_id == "vulkan")] | length) == 2
+   and ([.family_matrix.include[] | select(.backend_id | startswith("cuda"))] | length) == 4
+   and (.selection.exhaustive == false)'
 assert_pr_plan profiles/backends/web.yml 2 \
   '([.family_matrix.include[] | select(.backend_id == "web")] | length) == 1'
 assert_pr_plan config/playwright-pin.txt 3 \

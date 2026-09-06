@@ -131,6 +131,17 @@ They use the same independent tool/dependency checks as staged verification,
 with networking disabled. The verifier revision identifies the checkout
 performing the check and remains separate from both image source revisions.
 
+The Vulkan image includes the Vulkan loader, headers, shader compiler, and
+`vulkaninfo`. The CUDA image used by the NVIDIA-backed `gpu-nvidia` scale set
+also includes the Vulkan loader and `vulkaninfo`, so that one scale set can run
+both CUDA and Vulkan inference. Both images declare
+`NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics`, which asks NVIDIA
+Container Toolkit to inject the existing CUDA/diagnostic surface plus the
+graphics libraries and ICD needed by Vulkan. Run `verify-vulkan-device` in a
+live runner pod before inference; it fails unless `nvidia-smi` and
+`vulkaninfo --summary` enumerate the injected NVIDIA device. Image builds only
+verify the loader and compiler because the remote builder has no GPU device.
+
 ## Maintenance pipeline
 
 `.github/workflows/build-and-push.yml` runs on pull requests, pushes to `main`, a weekly schedule, and manual dispatch. It:

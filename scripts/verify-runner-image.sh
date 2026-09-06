@@ -21,6 +21,21 @@ actual_playwright_version="$(cat /etc/mesh-runner-playwright-version 2>/dev/null
 verification_directory="$(mktemp -d)"
 trap 'rm -rf "$verification_directory"' EXIT
 
+verify_nvidia_vulkan_image_contract() {
+  command -v vulkaninfo >/dev/null
+  command -v verify-vulkan-device >/dev/null
+  grep -Fq 'libvulkan.so.1' <<< "$(ldconfig -p)"
+  for required_capability in compute utility graphics; do
+    case ",${NVIDIA_DRIVER_CAPABILITIES:-}," in
+      *,all,*|*,"$required_capability",*) ;;
+      *)
+        echo "NVIDIA runner image is missing driver capability: $required_capability" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
 if [[ -n "$expected_environment" && "$actual_environment" != "$expected_environment" ]]; then
   echo "expected environment '$expected_environment', found '$actual_environment'" >&2
   exit 1
@@ -164,10 +179,12 @@ case "$actual_backend" in
   vulkan)
     command -v glslc >/dev/null
     pkg-config --exists vulkan
+    verify_nvidia_vulkan_image_contract
     printf '%s\n' '#version 450' 'layout(local_size_x = 1) in;' 'void main() {}' \
       | glslc -fshader-stage=compute -o "$verification_directory/probe.spv" -
     ;;
   cuda)
+    verify_nvidia_vulkan_image_contract
     command -v nvcc >/dev/null
     cuda_series="$(cat /etc/mesh-runner-cuda-series)"
     nvcc --version | grep -Fq "release ${cuda_series/-/.}"

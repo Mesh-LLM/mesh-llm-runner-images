@@ -31,9 +31,10 @@ The workflows repeatedly install these groups:
 - Node 24, npm, and pnpm.
 - C/C++ build chain: `build-essential`, CMake, Ninja, pkg-config, LLD, and sccache.
 - System libraries: OpenSSL, D-Bus, curl, and standard packaging utilities.
-- Vulkan compilation: `glslc`, `libvulkan-dev`, and `spirv-headers`.
+- Vulkan compilation and runtime diagnostics: `glslc`, `libvulkan-dev`,
+  `spirv-headers`, and `vulkan-tools` (`vulkaninfo`).
 - CI/diagnostics: Python 3 with venv/pip, curl, git/LFS, jq, lsof, patchelf, rsync, and shellcheck.
-- GPU specializations: versioned CUDA and ROCm compiler/library overlays, plus a Vulkan SDK overlay. Runtime GPU access remains a consumer-side hardware concern.
+- GPU specializations: versioned CUDA and ROCm compiler/library overlays, plus a Vulkan SDK overlay. The CUDA image also carries the Vulkan loader and diagnostics for the shared NVIDIA inference scale set. Runtime GPU access remains a consumer-side hardware concern.
 
 ## Environment policy
 
@@ -46,7 +47,7 @@ The public and self-hosted variants intentionally receive the same project manif
 | CUDA 12/13 | yes | yes | `nvcc`, CUDA runtime headers, cuBLAS headers/libraries |
 | ROCm 7.0/7.2 | yes | no | HIP compiler, HIP/rocBLAS headers and libraries |
 
-Every backend has a `public` job-container target and a `self-hosted` target. The latter adds the GitHub Actions runner. Building a GPU image verifies its compiler and SDK contract but does not imply that a consumer exposes matching GPU hardware.
+Every backend has a `public` job-container target and a `self-hosted` target. The latter adds the GitHub Actions runner. Building a GPU image verifies its compiler and SDK contract but does not imply that a consumer exposes matching GPU hardware. A live NVIDIA-backed Vulkan runner must additionally pass `verify-vulkan-device`, which verifies the injected driver capability, ICD, and physical device before inference.
 
 The only container base pulled by this repository is the digest-pinned
 `ghcr.io/actions/actions-runner` image. CUDA and ROCm are installed from vendor

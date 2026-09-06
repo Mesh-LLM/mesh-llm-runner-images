@@ -62,6 +62,11 @@ while IFS= read -r changed_file; do
     profiles/backends/vulkan.yml)
       vulkan_backend=true
       ;;
+    scripts/verify-vulkan-device.sh)
+      vulkan_backend=true
+      cuda12_backend=true
+      cuda13_backend=true
+      ;;
     profiles/backends/cuda.yml|scripts/install-cuda-toolchain.sh)
       cuda12_backend=true
       cuda13_backend=true
