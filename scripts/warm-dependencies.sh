@@ -11,10 +11,28 @@ if [[ -f "$manifest_root/Cargo.toml" && -f "$manifest_root/Cargo.lock" ]]; then
     /home/runner/.cargo/bin/cargo fetch --locked --manifest-path "$manifest_root/Cargo.toml"
 fi
 
+python_lock=/etc/mesh-runner-python-requirements.lock
+[[ -s "$python_lock" ]] || {
+  echo "missing Python runtime lock: $python_lock" >&2
+  exit 1
+}
 python3 -m venv /opt/mesh-llm/venv
+# Install only the reviewed dependency closure; never resolve floating source
+# requirements while rebuilding the image.
+/opt/mesh-llm/venv/bin/pip install --disable-pip-version-check --no-deps \
+  -r "$python_lock"
+/opt/mesh-llm/venv/bin/pip check
 if [[ -f "$manifest_root/ci/requirements-ci-python.txt" ]]; then
-  /opt/mesh-llm/venv/bin/pip install --disable-pip-version-check \
-    -r "$manifest_root/ci/requirements-ci-python.txt"
+  python_validation_report="$(mktemp)"
+  if ! /opt/mesh-llm/venv/bin/pip install --disable-pip-version-check \
+      --dry-run --no-index --report "$python_validation_report" \
+      -r "$manifest_root/ci/requirements-ci-python.txt" \
+    || ! jq -e '.install == []' "$python_validation_report" >/dev/null; then
+    rm -f "$python_validation_report"
+    echo "MeshLLM Python requirements are not satisfied by the frozen runtime; refresh config/python-requirements.lock (see docs/PYTHON_DEPENDENCIES.md)" >&2
+    exit 1
+  fi
+  rm -f "$python_validation_report"
 fi
 
 if [[ -f "$manifest_root/crates/mesh-llm-ui/pnpm-lock.yaml" ]]; then

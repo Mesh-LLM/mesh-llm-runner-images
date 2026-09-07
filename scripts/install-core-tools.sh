@@ -60,6 +60,25 @@ case "$TARGETARCH" in
   *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;;
 esac
 
+validate_tool_pins() {
+  local version_name version
+  for version_name in PNPM_VERSION RUST_VERSION JUST_VERSION SCCACHE_VERSION OPENAI_NPM_VERSION; do
+    version="${!version_name:-}"
+    [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+      echo "$version_name must be an exact MAJOR.MINOR.PATCH release version" >&2
+      return 1
+    }
+  done
+}
+
+verify_installed_version() {
+  local tool="$1" expected="$2" actual="$3"
+  [[ "$actual" == "$expected" ]] || {
+    echo "expected $tool $expected, found '$actual'" >&2
+    return 1
+  }
+}
+
 # The base image (ghcr.io/actions/actions-runner) ships node externals at
 # /home/runner/externals/node<N>/bin/{node,npm,npx,corepack}. Per the
 # Dockerfile's MUST-NOT contract, we do NOT `apt install nodejs` here;
@@ -68,12 +87,15 @@ esac
 # verify-runner-image.sh `command -v node` assertion.
 wire_node_from_base() {
   local externals_root="/home/runner/externals/node${NODE_MAJOR}/bin"
+  local installed_pnpm
   test -x "${externals_root}/node" \
     || { echo "base image missing node${NODE_MAJOR} externals at ${externals_root}" >&2; exit 1; }
   for binary in node npm npx corepack; do
     ln -sf "${externals_root}/${binary}" "/usr/local/bin/${binary}"
   done
-  npm install --global "pnpm@10"
+  npm install --global "pnpm@${PNPM_VERSION}"
+  installed_pnpm="$(pnpm --version)" || return
+  verify_installed_version pnpm "$PNPM_VERSION" "$installed_pnpm" || return
   # The last un-baked smoke-test dependency (mesh-llm's smoke.yml and
   # sdk-smoke.yml `npm install --global openai` steps). Small enough to
   # belong in the common layer rather than justifying its own backend.
@@ -84,16 +106,25 @@ wire_node_from_base() {
 }
 
 install_rust() {
+  local installed_rust compiler version
   # runuser (util-linux) switches user without consulting sudoers; the
   # actions/runner base image's /etc/sudoers omits the standard
   # `root ALL=(...)` entry and the @includedir /etc/sudoers.d directive,
   # so `sudo -u runner` from a root RUN context would fail.
+  # Expand the positional version argument only inside the runner shell.
+  # shellcheck disable=SC2016
   runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
-    bash -c 'curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable'
+    bash -o pipefail -c 'curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$1"' \
+      rustup-install "$RUST_VERSION"
   runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
-    /home/runner/.cargo/bin/rustup component add clippy rustfmt
+    /home/runner/.cargo/bin/rustup component add --toolchain "$RUST_VERSION" clippy rustfmt
   runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
-    /home/runner/.cargo/bin/rustup target add aarch64-linux-android
+    /home/runner/.cargo/bin/rustup target add --toolchain "$RUST_VERSION" aarch64-linux-android
+  installed_rust="$(runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
+    /home/runner/.cargo/bin/rustc --version)" || return
+  read -r compiler version _ <<< "$installed_rust"
+  [[ "$compiler" == rustc ]] || { echo "unexpected Rust version output: $installed_rust" >&2; return 1; }
+  verify_installed_version rustc "$RUST_VERSION" "$version"
 }
 
 install_just() {
@@ -119,6 +150,7 @@ install_sccache() {
 }
 
 cd /tmp
+validate_tool_pins
 wire_node_from_base
 install_rust
 install_just

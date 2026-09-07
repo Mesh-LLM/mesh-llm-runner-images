@@ -18,10 +18,6 @@ ARG ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdc
 FROM ${ACTIONS_RUNNER_BASE_IMAGE} AS toolchain
 
 ARG TARGETARCH
-ARG NODE_MAJOR=24
-ARG JUST_VERSION=1.57.0
-ARG SCCACHE_VERSION=0.16.0
-ARG OPENAI_NPM_VERSION=7.5.0
 
 LABEL org.opencontainers.image.source="https://github.com/Mesh-LLM/mesh-llm-runner-images" \
       org.opencontainers.image.description="Reproducible multi-architecture MeshLLM CI environment" \
@@ -85,18 +81,22 @@ RUN mkdir -p \
       /home/runner/.rustup/downloads \
     && chown -R runner:docker /opt/mesh-llm /home/runner
 
+ARG NODE_MAJOR=24
+ARG PNPM_VERSION=10.34.5
+ARG RUST_VERSION=1.98.1
+ARG JUST_VERSION=1.57.0
+ARG SCCACHE_VERSION=0.16.0
+ARG OPENAI_NPM_VERSION=7.5.0
 COPY scripts/install-core-tools.sh /usr/local/bin/install-core-tools
 RUN --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-${TARGETARCH},target=/root/.npm,sharing=locked \
-    --mount=type=cache,id=mesh-runner-rustup-stable-ubuntu24-${TARGETARCH},target=/home/runner/.rustup/downloads,uid=1001,gid=123,mode=0775,sharing=locked \
+    --mount=type=cache,id=mesh-runner-rustup-${RUST_VERSION}-ubuntu24-${TARGETARCH},target=/home/runner/.rustup/downloads,uid=1001,gid=123,mode=0775,sharing=locked \
     --mount=type=cache,id=mesh-runner-tool-downloads-ubuntu24-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
     chmod 0755 /usr/local/bin/install-core-tools \
     && TARGETARCH="${TARGETARCH}" NODE_MAJOR="${NODE_MAJOR}" JUST_VERSION="${JUST_VERSION}" SCCACHE_VERSION="${SCCACHE_VERSION}" \
-       OPENAI_NPM_VERSION="${OPENAI_NPM_VERSION}" \
+       OPENAI_NPM_VERSION="${OPENAI_NPM_VERSION}" PNPM_VERSION="${PNPM_VERSION}" RUST_VERSION="${RUST_VERSION}" \
        /usr/local/bin/install-core-tools
 
-COPY scripts/verify-runner-image.sh /usr/local/bin/verify-runner-image
-RUN chmod 0755 /usr/local/bin/verify-runner-image \
-    && git lfs install --system
+RUN git lfs install --system
 
 WORKDIR /workspace
 USER runner
@@ -110,6 +110,7 @@ ENV NPM_CONFIG_CACHE=/home/runner/.npm \
     npm_config_store_dir=/home/runner/.local/share/pnpm/store
 # Both environments have the same payload; provenance is copied separately.
 COPY build-context/manifests/public/dependencies/ /opt/mesh-llm/manifests/
+COPY config/python-requirements.lock /etc/mesh-runner-python-requirements.lock
 COPY scripts/warm-dependencies.sh /usr/local/bin/warm-dependencies
 RUN --mount=type=cache,id=mesh-runner-pip-python3.12-ubuntu24-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
     chmod 0755 /usr/local/bin/warm-dependencies \
@@ -260,6 +261,9 @@ COPY build-context/manifests/${RUNNER_ENVIRONMENT}/manifest-index.json \
      build-context/manifests/${RUNNER_ENVIRONMENT}/source-revision.txt \
      build-context/manifests/${RUNNER_ENVIRONMENT}/profile.txt /opt/mesh-llm/manifests/
 LABEL io.mesh-llm.runner.environment="${RUNNER_ENVIRONMENT}"
+COPY config/python-requirements.lock /etc/mesh-runner-python-requirements.lock
+COPY scripts/verify-runner-image.sh /usr/local/bin/verify-runner-image
+RUN chmod 0755 /usr/local/bin/verify-runner-image
 USER runner
 
 FROM selected-backend AS public
@@ -303,19 +307,10 @@ RUN /usr/local/bin/verify-runner-image \
 FROM selected-backend AS self-hosted
 
 USER root
-ARG TARGETARCH
 ARG MESH_LLM_REVISION=unknown
 ARG RUNNER_IMAGES_REVISION=unknown
-ARG RUNNER_VERSION=2.336.0
-ARG RUNNER_SHA256_AMD64=04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d
-ARG RUNNER_SHA256_ARM64=58b758e420b87093fbd4bfddd368074960053e2f1388f01848c82624b90f27d1
-
-COPY scripts/install-actions-runner.sh /usr/local/bin/install-actions-runner
-RUN --mount=type=cache,id=mesh-runner-actions-runner-downloads-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
-    chmod 0755 /usr/local/bin/install-actions-runner \
-    && TARGETARCH="${TARGETARCH}" RUNNER_VERSION="${RUNNER_VERSION}" \
-       RUNNER_SHA256_AMD64="${RUNNER_SHA256_AMD64}" RUNNER_SHA256_ARM64="${RUNNER_SHA256_ARM64}" \
-       /usr/local/bin/install-actions-runner
+# The digest-pinned base already contains the complete Actions runner and its
+# Node runtimes. Preserve that installation instead of overlaying a second copy.
 
 # GHA convention paths (same rationale as the `public` target). At runtime
 # the ARC runner pod's kubelet may bind-mount /__e over the symlink; that
