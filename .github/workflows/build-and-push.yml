@@ -250,6 +250,7 @@ jobs:
       environment: ${{ matrix.environment }}
       backend_id: ${{ matrix.backend_id }}
       backend_name: ${{ matrix.backend_name }}
+      dockerfile: ${{ matrix.dockerfile }}
       cuda_series: ${{ matrix.cuda_series }}
       rocm_version: ${{ matrix.rocm_version }}
       architectures: ${{ matrix.architectures }}
@@ -281,6 +282,7 @@ jobs:
       environment: ${{ matrix.environment }}
       backend_id: ${{ matrix.backend_id }}
       backend_name: ${{ matrix.backend_name }}
+      dockerfile: ${{ matrix.dockerfile }}
       cuda_series: ${{ matrix.cuda_series }}
       rocm_version: ${{ matrix.rocm_version }}
       architectures: ${{ matrix.architectures }}

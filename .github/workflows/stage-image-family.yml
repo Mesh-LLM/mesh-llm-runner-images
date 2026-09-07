@@ -15,6 +15,11 @@ on:
         description: Docker backend stage name
         type: string
         required: true
+      dockerfile:
+        description: Catalog-selected Dockerfile or Dockerfile.ui
+        type: string
+        required: false
+        default: Dockerfile
       cuda_series:
         description: CUDA series or none
         type: string
@@ -148,6 +153,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate catalog build selection
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          BACKEND_ID: ${{ inputs.backend_id }}
+          BACKEND_NAME: ${{ inputs.backend_name }}
+          CUDA_SERIES: ${{ inputs.cuda_series }}
+          ROCM_VERSION: ${{ inputs.rocm_version }}
+          ARCHITECTURES: ${{ inputs.architectures }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          scripts/validate-family-selection.sh "$ENVIRONMENT" "$BACKEND_ID" \
+            "$BACKEND_NAME" "$CUDA_SERIES" "$ROCM_VERSION" "$ARCHITECTURES" "$DOCKERFILE"
+
       - name: Download manifest bundles
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -250,6 +269,7 @@ jobs:
         with:
           project: ${{ env.DEPOT_PROJECT_ID }}
           context: .
+          file: ${{ inputs.dockerfile }}
           target: ${{ inputs.execution_mode != 'validate' && inputs.environment || format('{0}-test', inputs.environment) }}
           platforms: ${{ matrix.platform }}
           outputs: ${{ inputs.execution_mode != 'validate' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || '' }}

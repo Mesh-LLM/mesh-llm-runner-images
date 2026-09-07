@@ -12,10 +12,10 @@ export SCCACHE_VERSION=test
 export OPENAI_NPM_VERSION=test
 export TARGETARCH=amd64
 
-# Load only the cache helper; the remainder installs the full runner toolchain.
-# shellcheck disable=SC1090
-source <(awk '/^case "\$TARGETARCH" in$/ { exit } { print }' \
-  "$repo_root/scripts/install-core-tools.sh")
+# The shared helper has no installation entrypoint.
+# shellcheck source=scripts/install-tools-common.sh
+source "$repo_root/scripts/install-tools-common.sh"
+mkdir -p "$DOWNLOAD_CACHE_DIR"
 
 archive="$temporary/cache/tool.tar.gz"
 checksum="$archive.sha256"

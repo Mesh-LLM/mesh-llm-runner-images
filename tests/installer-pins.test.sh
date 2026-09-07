@@ -5,6 +5,7 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 mkdir -p "$temporary_directory/bin" "$temporary_directory/cache"
+cp "$repository_root/scripts/install-tools-common.sh" "$temporary_directory/install-tools-common.sh"
 
 # Load installer functions without the real installation entrypoint.
 awk '/^cd \/tmp$/ { exit } { print }' "$repository_root/scripts/install-core-tools.sh" \

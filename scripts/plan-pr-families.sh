@@ -24,17 +24,28 @@ cuda13_backend=false
 rocm70_backend=false
 rocm72_backend=false
 web_backend=false
+ui_backend=false
+browser_backend=false
 changed_count=0
 
 while IFS= read -r changed_file; do
   [[ -n "$changed_file" ]] || continue
   changed_count=$((changed_count + 1))
   case "$changed_file" in
-    # Scoped ahead of the config/* catch-all below: the pin only affects the
-    # web backend, unlike config/runner-image-families.json which can change
+    # Scoped ahead of config/*: the pin affects both browser-capable images,
+    # unlike config/runner-image-families.json which can change
     # which backends/environments exist at all and stays exhaustive.
     config/playwright-pin.txt)
       web_backend=true
+      browser_backend=true
+      ;;
+    Dockerfile.ui|profiles/ui.yml|scripts/install-ui-tools.sh|scripts/prepare-ui-dependencies.sh|scripts/warm-ui-dependencies.sh)
+      ui_backend=true
+      browser_backend=true
+      ;;
+    scripts/install-playwright.sh)
+      web_backend=true
+      browser_backend=true
       ;;
     Dockerfile|Dockerfile.verify|.dockerignore|config/*|profiles/common.yml)
       all_families=true
@@ -62,7 +73,7 @@ while IFS= read -r changed_file; do
     profiles/backends/web.yml)
       web_backend=true
       ;;
-    scripts/collect-manifests.sh|scripts/install-core-tools.sh|scripts/prepare-build-context.sh|scripts/profile-packages.sh|scripts/verify-runner-image.sh|scripts/verify-python-requirements.sh|scripts/warm-dependencies.sh)
+    scripts/collect-manifests.sh|scripts/install-core-tools.sh|scripts/install-tools-common.sh|scripts/prepare-build-context.sh|scripts/profile-packages.sh|scripts/verify-runner-image.sh|scripts/verify-python-requirements.sh|scripts/warm-dependencies.sh)
       all_families=true
       ;;
     .github/*|docs/*|tests/*|README.md|LICENSE|scripts/generate-*|scripts/install-actionlint.sh|scripts/plan-pr-families.sh|scripts/promote-*|scripts/reconcile-*|scripts/select-*|scripts/test.sh|scripts/validate-*|scripts/verify-end-to-end.sh)
@@ -89,6 +100,8 @@ backends_json="$(
     if [[ "$rocm70_backend" == true ]]; then printf 'rocm70\n'; fi
     if [[ "$rocm72_backend" == true ]]; then printf 'rocm72\n'; fi
     if [[ "$web_backend" == true ]]; then printf 'web\n'; fi
+    if [[ "$ui_backend" == true ]]; then printf 'ui\n'; fi
+    if [[ "$browser_backend" == true ]]; then printf 'browser\n'; fi
   } | jq -R . | jq -sc .
 )"
 

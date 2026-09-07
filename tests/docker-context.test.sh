@@ -12,6 +12,7 @@ mkdir -p \
   "$temporary_directory/config" \
   "$temporary_directory/build-context/manifests"
 printf 'dockerfile' > "$temporary_directory/Dockerfile"
+printf 'lean' > "$temporary_directory/Dockerfile.ui"
 printf 'verify' > "$temporary_directory/Dockerfile.verify"
 printf 'profile' > "$temporary_directory/profiles/profile.yml"
 printf 'script' > "$temporary_directory/scripts/tool.sh"
@@ -22,8 +23,8 @@ printf 'ignored' > "$temporary_directory/ignored.txt"
 
 metrics="$(bash "$measure_context" "$temporary_directory")"
 jq -e \
-  --argjson expected_bytes "$((10 + 6 + 7 + 6 + 8 + 6 + 14))" \
-  '.schema == 1 and .content_bytes == $expected_bytes and .file_count == 7' \
+  --argjson expected_bytes "$((10 + 4 + 6 + 7 + 6 + 8 + 6 + 14))" \
+  '.schema == 1 and .content_bytes == $expected_bytes and .file_count == 8' \
   <<< "$metrics" >/dev/null
 
 mkdir -p \

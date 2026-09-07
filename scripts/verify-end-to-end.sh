@@ -83,7 +83,7 @@ if [[ "$all_backends" == true ]]; then
   while IFS=$'\t' read -r environment backend_id backend cuda_series rocm_version architecture_list; do
     IFS=, read -r -a architectures <<< "$architecture_list"
     expected_playwright=none
-    if [[ "$backend" == web ]]; then expected_playwright="$playwright_version"; fi
+    if [[ "$backend" == web || "$backend" == browser ]]; then expected_playwright="$playwright_version"; fi
     verify_image "$environment-$backend_id-latest" "$environment" "$backend" \
       "$cuda_series" "$rocm_version" "$expected_playwright" "${architectures[@]}"
   done <<< "$family_rows"

@@ -14,7 +14,7 @@ actual_revision="$(cat /etc/mesh-llm-revision)"
 actual_cuda_series="$(cat /etc/mesh-runner-cuda-series)"
 actual_rocm_version="$(cat /etc/mesh-runner-rocm-version)"
 actual_runner_images_revision="$(cat /etc/mesh-runner-images-revision)"
-# Only the web backend writes this file (Dockerfile backend-web stage);
+# Only browser-capable backends write this file;
 # every other backend reports "none", matching the cuda_series/rocm_version
 # no-op convention above.
 actual_playwright_version="$(cat /etc/mesh-runner-playwright-version 2>/dev/null || echo none)"
@@ -86,9 +86,45 @@ if [[ -n "$expected_playwright_version" ]]; then
   fi
 fi
 
-for command_name in cargo cmake docker git jq just lld node ninja npm pnpm python rustc sccache; do
+lean_backend=false
+case "$actual_backend" in
+  ui|browser)
+    lean_backend=true
+    [[ "$actual_environment" == public && "$(uname -m)" == x86_64 ]] || {
+      echo "lean UI and browser images support public AMD64 execution only" >&2
+      exit 1
+    }
+    [[ "$actual_cuda_series" == none && "$actual_rocm_version" == none ]]
+    [[ "${ONNXRUNTIME_NODE_INSTALL:-}" == skip ]] || {
+      echo "lean UI images must disable ONNX runtime GPU downloads" >&2
+      exit 1
+    }
+    [[ -z "${CARGO_HOME:-}" && -z "${RUSTUP_HOME:-}" && -z "${VIRTUAL_ENV:-}" ]]
+    test ! -e /opt/mesh-llm/venv
+    for absent_command in cargo rustc sccache; do
+      if command -v "$absent_command" >/dev/null; then
+        echo "lean image unexpectedly includes $absent_command" >&2
+        exit 1
+      fi
+    done
+    required_commands=(bash docker git jq just node npm pnpm python3 tar gzip unzip xz zip zstd)
+    ;;
+  *) required_commands=(cargo cmake docker git jq just lld node ninja npm pnpm python rustc sccache) ;;
+esac
+for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null || { echo "missing command: $command_name" >&2; exit 1; }
 done
+
+if [[ "$lean_backend" == true ]]; then
+  [[ "$(cat /etc/mesh-runner-node-major)" == 24 ]]
+  [[ "$(node --version)" =~ ^v24\.[0-9]+\.[0-9]+$ ]]
+  declared_pnpm="$(cat /etc/mesh-runner-pnpm-version)"
+  [[ "$declared_pnpm" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+  [[ "$(pnpm --version)" == "$declared_pnpm" ]]
+  [[ "${npm_config_store_dir:-}" == /home/runner/.local/share/pnpm/store ]]
+  test -d "$npm_config_store_dir"
+  python3 -c 'import json, pathlib, ssl, tarfile; print("Python standard library: ok")'
+fi
 
 # GHA convention paths and the actions/runner-bundled node externals.
 # Required by the public AND self-hosted targets so workflow `container:`
@@ -121,6 +157,10 @@ esac
 
 case "$actual_backend" in
   cpu) ;;
+  ui)
+    [[ "$actual_playwright_version" == none ]]
+    [[ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]
+    ;;
   vulkan)
     command -v glslc >/dev/null
     pkg-config --exists vulkan
@@ -145,12 +185,20 @@ case "$actual_backend" in
     printf '%s\n' '#include <hip/hip_runtime.h>' '__global__ void probe() {}' \
       | hipcc -x hip -c --offload-arch=gfx1100 -o "$verification_directory/probe.o" -
     ;;
-  web)
+  web|browser)
     test -n "${PLAYWRIGHT_BROWSERS_PATH:-}"
     test -d "$PLAYWRIGHT_BROWSERS_PATH"
     find "$PLAYWRIGHT_BROWSERS_PATH" -mindepth 1 -maxdepth 1 -type d -name 'chromium-*' -print -quit \
       | grep -q .
     test -s /etc/mesh-runner-playwright-version
+    if [[ "$actual_backend" == browser ]]; then
+      [[ "$actual_playwright_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+      [[ "${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-}" == 1 ]]
+      test -s /etc/mesh-runner-chromium-build
+      test -d "$PLAYWRIGHT_BROWSERS_PATH/$(cat /etc/mesh-runner-chromium-build)"
+      installed_playwright="$(node -p 'require("playwright/package.json").version')"
+      [[ "$installed_playwright" == "$actual_playwright_version" ]]
+    fi
     # The only check that actually proves `install-deps` installed a
     # sufficient package set: launch Chromium headless, offline, and close
     # it. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD stays baked at 1, so a missing or
@@ -167,12 +215,19 @@ case "$actual_backend" in
   *) echo "unsupported backend: $actual_backend" >&2; exit 1 ;;
 esac
 
-python - <<'PY'
+if [[ "$lean_backend" == true ]]; then
+  cargo_version=""
+  python_version="$(python3 --version 2>&1)"
+else
+  python - <<'PY'
 import langchain_openai
 import litellm
 import openai
 print("python dependencies: ok")
 PY
+  cargo_version="$(cargo --version)"
+  python_version="$(python --version 2>&1)"
+fi
 
 jq -n \
   --arg architecture "$(uname -m)" \
@@ -183,8 +238,9 @@ jq -n \
   --arg cuda_series "$actual_cuda_series" \
   --arg rocm_version "$actual_rocm_version" \
   --arg playwright_version "$actual_playwright_version" \
-  --arg cargo "$(cargo --version)" \
+  --arg cargo "$cargo_version" \
+  --argjson lean_backend "$lean_backend" \
   --arg node "$(node --version)" \
   --arg pnpm "$(pnpm --version)" \
-  --arg python "$(python --version 2>&1)" \
-  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, runner_images_revision: $runner_images_revision, backend_metadata: {cuda_series: $cuda_series, rocm_version: $rocm_version, playwright_version: $playwright_version}, tools: {cargo: $cargo, node: $node, pnpm: $pnpm, python: $python}}'
+  --arg python "$python_version" \
+  '{architecture: $architecture, environment: $environment, backend: $backend, mesh_llm_revision: $revision, runner_images_revision: $runner_images_revision, backend_metadata: {cuda_series: $cuda_series, rocm_version: $rocm_version, playwright_version: $playwright_version}, tools: {cargo: (if $lean_backend then null else $cargo end), node: $node, pnpm: $pnpm, python: $python}}'

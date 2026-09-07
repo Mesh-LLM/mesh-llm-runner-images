@@ -48,8 +48,36 @@ def dependency_layers(inspect, history):
             raise ValueError(f"unsupported or nonempty metadata history: {command}")
     if len(filesystem) != len(layers):
         raise ValueError(f"history/layer count mismatch: {len(filesystem)} != {len(layers)}")
+    return dependency_copy_layers(layers, filesystem, DEPENDENCY_PATHS)
+
+
+def dependency_layers_from_config(config, paths=DEPENDENCY_PATHS):
+    """Use OCI's explicit empty_layer flag, never a Docker history byte size."""
+    layers = config["rootfs"]["diff_ids"]
+    history = config["history"]
+    if config["rootfs"]["type"] != "layers" or not isinstance(layers, list) or not all(
+        isinstance(layer, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", layer) for layer in layers
+    ):
+        raise ValueError("invalid OCI configuration rootfs diffIDs")
+    if not isinstance(history, list) or not history:
+        raise ValueError("missing OCI configuration history")
+    filesystem = []
+    for row in history:  # OCI configuration history is oldest first.
+        if not isinstance(row, dict) or type(row.get("empty_layer", False)) is not bool:
+            raise ValueError("invalid OCI empty_layer history marker")
+        command = row.get("created_by", "")
+        if not isinstance(command, str):
+            raise ValueError("invalid OCI history command")
+        if not row.get("empty_layer", False):
+            filesystem.append({"CreatedBy": command})
+    if len(filesystem) != len(layers):
+        raise ValueError("OCI nonempty history count does not match rootfs diffIDs")
+    return dependency_copy_layers(layers, filesystem, paths)
+
+
+def dependency_copy_layers(layers, filesystem, paths):
     result = []
-    for path in DEPENDENCY_PATHS:
+    for path in paths:
         expected = ["COPY", "--chown=1001:123", path, path, "#", "buildkit"]
         matches = [(index, row) for index, row in enumerate(filesystem)
                    if row["CreatedBy"].split() == expected]
@@ -59,7 +87,7 @@ def dependency_layers(inspect, history):
         result.append({"path": path, "layer_index": index, "diff_id": layers[index],
                        "created_by": row["CreatedBy"]})
     indexes = [row["layer_index"] for row in result]
-    if indexes != list(range(indexes[0], indexes[0] + len(DEPENDENCY_PATHS))):
+    if not indexes or indexes != list(range(indexes[0], indexes[0] + len(paths))):
         raise ValueError("dependency COPY layers are not contiguous and ordered")
     return result
 

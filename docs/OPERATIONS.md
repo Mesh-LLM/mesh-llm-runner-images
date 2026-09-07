@@ -171,9 +171,9 @@ supported platform. If GHCR is private, authenticate before running it.
 Restore the previous immutable digest in the owning consumer repository. Do not
 retag an existing image or use a mutable tag as a rollback mechanism.
 
-## Bumping the baked Playwright/Chromium version (`public-web`)
+## Bumping the baked Playwright/Chromium version
 
-The `web` backend bakes a specific Chromium build, declared once in
+The `web` and `browser` backends bake a specific Chromium build, declared once in
 `config/playwright-pin.txt` (currently the `playwright` package version, which
 mesh-llm's pinned `@playwright/test` version always matches exactly — Playwright
 ships those two packages in lockstep). This image is the stable side of that
@@ -189,10 +189,10 @@ inside the container before running `pnpm run test:e2e` (see
 second.**
 
 1. Bump `config/playwright-pin.txt` here, land it, and run this repo's
-   publication order above through `promote` so a new `public-web` digest
-   exists in the registry.
+   publication order above through `promote` so new `public-web` and
+   `public-browser` digests exist in the registry.
 2. Only then bump `@playwright/test` in `crates/mesh-llm-ui/pnpm-lock.yaml`
-   and the consumed `public-web` digest in mesh-llm, in the same PR.
+   and each consumed browser-capable image digest in mesh-llm, in the same PR.
 
 Doing it in the other order — bumping mesh-llm's lockfile first — leaves
 `ui_e2e`'s preflight version check failing on `main` with no image to point at
@@ -200,4 +200,4 @@ yet; that check is deliberately strict (mode C in the runner-images design:
 it fails loudly on a mismatch rather than letting Playwright silently
 re-download a browser to match its own lockfile, which is exactly the apt
 call this backend exists to remove). If it blocks a bump, the fix is always
-promoting the new `public-web` image, never loosening the check.
+promoting the corresponding browser-capable image with the new pin.

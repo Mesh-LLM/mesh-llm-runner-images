@@ -103,20 +103,22 @@ assert_matrix() {
   jq -e \
     '
       .family_matrix.include as $families
-      | ($families | length) == 13
+      | ($families | length) == 15
       and ([$families[].environment] | unique | sort) == ["public", "self-hosted"]
       and ([$families[].backend_id] | unique | sort) == [
+        "browser",
         "cpu",
         "cuda12",
         "cuda13",
         "rocm70",
         "rocm72",
+        "ui",
         "vulkan",
         "web"
       ]
       and all(
         $families[];
-        if .backend_name == "rocm" or .backend_name == "web" then
+        if .backend_name == "rocm" or .backend_name == "web" or .backend_name == "ui" or .backend_name == "browser" then
           .architectures == "amd64"
         else
           .architectures == "amd64,arm64"
@@ -130,7 +132,7 @@ assert_matrix() {
       and ([$families[] | select(.backend_id == "web" and .environment == "self-hosted")] | length) == 0
       and (
         .promotion_matrix.include as $promotions
-        | ($promotions | length) == 14
+        | ($promotions | length) == 16
         and ([$promotions[] | select(.backend_id == "compatibility")] | length) == 1
         and ([$promotions[] | select(.compatibility_tag_stem != "")] | length) == 1
         and (
@@ -140,11 +142,13 @@ assert_matrix() {
           and .compatibility_tag_stem == "public"
         )
         and ([$promotions[].tag_stem] | sort) == [
+          "public-browser",
           "public-cpu",
           "public-cuda12",
           "public-cuda13",
           "public-rocm70",
           "public-rocm72",
+          "public-ui",
           "public-vulkan",
           "public-web",
           "self-hosted",
@@ -240,18 +244,23 @@ assert_pr_plan docs/OPERATIONS.md 1 \
     backend_name: "cpu",
     cuda_series: "none",
     rocm_version: "none",
-    architectures: "amd64"
+    architectures: "amd64",
+    dockerfile: "Dockerfile"
   }]'
 assert_pr_plan scripts/install-rocm-toolchain.sh 5 \
   '([.family_matrix.include[] | select(.backend_id | startswith("rocm"))] | length) == 4'
 assert_pr_plan profiles/backends/web.yml 2 \
   '([.family_matrix.include[] | select(.backend_id == "web")] | length) == 1'
-assert_pr_plan config/playwright-pin.txt 2 \
+assert_pr_plan config/playwright-pin.txt 3 \
   '([.family_matrix.include[] | select(.backend_id == "web")] | length) == 1
    and (.selection.exhaustive == false)'
-assert_pr_plan profiles/public.yml 7 \
+assert_pr_plan Dockerfile.ui 3 \
+  '([.family_matrix.include[] | select(.dockerfile == "Dockerfile.ui")] | length) == 2'
+assert_pr_plan scripts/install-playwright.sh 3 \
+  '([.family_matrix.include[].backend_id] | sort) == ["browser", "cpu", "web"]'
+assert_pr_plan profiles/public.yml 9 \
   'all(.family_matrix.include[]; .environment == "public")'
-assert_pr_plan Dockerfile 13 '.selection.exhaustive == true'
+assert_pr_plan Dockerfile 15 '.selection.exhaustive == true'
 
 workflow="$repository_root/.github/workflows/build-and-push.yml"
 reusable_workflow="$repository_root/.github/workflows/stage-image-family.yml"
@@ -353,6 +362,10 @@ fi
 grep -Fq 'depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287' \
   "$depot_build_step"
 grep -Fq "project: \${{ env.DEPOT_PROJECT_ID }}" "$depot_build_step"
+grep -Fq "file: \${{ inputs.dockerfile }}" "$depot_build_step"
+for caller in "$validate_families_job" "$stage_families_job"; do
+  grep -Fq "dockerfile: \${{ matrix.dockerfile }}" "$caller"
+done
 grep -Fq "ACTIONS_RUNNER_BASE_IMAGE=\${{ steps.base_image.outputs.image }}" \
   "$depot_build_step"
 if grep -Eq 'docker/build-push-action|type=gha' "$depot_build_step"; then

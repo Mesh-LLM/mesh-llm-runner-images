@@ -8,7 +8,7 @@ usage: promote-image-digest.sh \
   --image IMAGE \
   --environment public|self-hosted \
   --backend-id ID \
-  --backend-name cpu|vulkan|cuda|rocm|web|mixed \
+  --backend-name cpu|vulkan|cuda|rocm|web|ui|browser|mixed \
   --cuda-series none|MAJOR-MINOR \
   --rocm-version none|VERSION \
   --mesh-revision SHA \

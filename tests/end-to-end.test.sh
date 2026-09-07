@@ -31,8 +31,8 @@ bash "$verifier" --all-backends > "$temporary_directory/output"
 jq -se 'any(.[]; .[0] == "run" and (.[6] | contains("public-web-latest")))' \
   "$MOCK_DOCKER_LOG" >/dev/null
 jq -se '
-  ([.[] | select(.[0] == "run")] | length) == 25
-  and ([.[] | select(.[0] == "buildx")] | length) == 15
+  ([.[] | select(.[0] == "run")] | length) == 27
+  and ([.[] | select(.[0] == "buildx")] | length) == 17
   and all(.[] | select(.[0] == "run"); length == 14)
   and any(.[]; .[0] == "run" and (.[6] | contains("self-hosted-latest")))
 ' "$MOCK_DOCKER_LOG" >/dev/null
@@ -49,6 +49,8 @@ assert_backend() {
     ' "$MOCK_DOCKER_LOG" >/dev/null
 }
 assert_backend public-web-latest amd64 public web none none "$(cat "$repository_root/config/playwright-pin.txt")"
+assert_backend public-ui-latest amd64 public ui none none none
+assert_backend public-browser-latest amd64 public browser none none "$(cat "$repository_root/config/playwright-pin.txt")"
 assert_backend public-cuda13-latest arm64 public cuda 13-1 none none
 assert_backend public-rocm70-latest amd64 public rocm none 7.0 none
 assert_backend self-hosted-rocm72-latest amd64 self-hosted rocm none 7.2.3 none
@@ -67,7 +69,9 @@ for environment in public self-hosted; do
     printf '%s-%s-latest\tlinux/amd64\n' "$environment" "$backend"
   done
 done > "$expected_rows"
-printf 'public-web-latest\tlinux/amd64\n' >> "$expected_rows"
+for backend in web ui browser; do
+  printf 'public-%s-latest\tlinux/amd64\n' "$backend" >> "$expected_rows"
+done
 for tag in public self-hosted; do
   for architecture in amd64 arm64; do
     printf '%s-latest\tlinux/%s\n' "$tag" "$architecture"
@@ -111,6 +115,7 @@ printf '1.60.0\n' > "$temporary_directory/repo/config/playwright-pin.txt"
 : > "$MOCK_DOCKER_LOG"
 bash "$verifier" --all-backends >/dev/null
 assert_backend public-web-latest amd64 public web none none 1.60.0
+assert_backend public-browser-latest amd64 public browser none none 1.60.0
 assert_backend self-hosted-latest amd64 self-hosted cuda 12-8 none none
 
 : > "$MOCK_DOCKER_LOG"

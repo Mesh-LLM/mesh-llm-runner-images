@@ -9,7 +9,7 @@ Complete the remaining runner-image optimizations from the revised audit in
 `/Users/ndizazzo/dev/mesh/worktrees/runner-image-improvements`, branch
 `codex/runner-image-improvements`. Work in stages and require focused tests,
 appropriate real image checks, and independent review before advancing.
-Stage 3 is complete; continue with the lean UI/browser stage. Coordinate tests and consumer integration
+Stages 1–4 are complete; continue with shared image and cache identity. Coordinate tests and consumer integration
 with task `01a07dce-676e-7640-9715-cf40b62790dc`, preserve its release changes and
 frozen worktrees, and wait for any changes that invalidate a test's inputs.
 Keep AMD64 CUDA compilation on the existing desk k3s ARC runner. Complete only
@@ -96,21 +96,93 @@ Stage 3 validation after resume:
   f80dd2d, with that checkpoint's actual full SHA supplied. They are not
   published or claimed as immutable release candidates.
 
+## Stage 4 complete
+
+The working tree adds public AMD64 `ui` and `browser` families through
+`Dockerfile.ui`, with catalog-validated workflow selection. The full `web`
+image remains available. UI images have a separate, filtered package store,
+stdlib Python, Node/pnpm/just, and the Actions convention paths. The browser
+family adds the same pinned Playwright/Chromium installer as full web.
+
+The lean store is built from scratch with `ONNXRUNTIME_NODE_INSTALL=skip`.
+pnpm's lifecycle cache identity does not include that flag, so importing the
+full image's store could restore CUDA/TensorRT side effects. Build logs confirm
+the ONNX/protobufjs install hooks ran. Runtime tests explicitly enable hooks
+and inspect both physical files and pnpm's hashed index mappings for GPU payloads.
+
+Native AMD64 checks against immutable MeshLLM source
+`cd602d6cba0f505fd9e1b4a6b5d1ca261a0032a0` have passed:
+
+- UI: offline frozen install, lint, typecheck, 202 test files (1,660 passed,
+  three skipped), production build, and GPU-payload checks. Total 108 seconds.
+- Browser: the same UI checks, then 64 Playwright tests passed and two skipped.
+  Browser E2E took 134 seconds. Networking was disabled and no host directories
+  were mounted for either family; source arrived through `git archive` stdin.
+- Full web: rebuilt with the extracted installers, passed the independent
+  Playwright pin and full tool/AI verifier, then passed the offline verifier,
+  root/runner npm and pnpm installs, and all 71 locked Python versions.
+- Native ARM64 toolchain: rebuilt the extracted installers and passed offline
+  exact pnpm/Rust/just/sccache/OpenAI checks with Node 24.
+
+Verified runnable-image compressed layer descriptor totals (config, manifest,
+index and attestation bytes excluded):
+
+| Family | Compressed layer bytes | Reduction from full web |
+| --- | ---: | ---: |
+| Full web | 2,417,529,197 | — |
+| UI | 849,113,102 | 64.9% |
+| Browser | 1,263,899,888 | 47.7% |
+
+These are image-size measurements, not observed pull-time savings. The helper
+`scripts/measure-image-layers.py` verifies OCI metadata digests, sizes and
+platform using small metadata reads; it does not use Docker's ambiguous `.Size`.
+Local image indexes are UI `sha256:2a9f5971783276d100341ccade47b92fae2e489938475a625210549d71fd9a60`,
+browser `sha256:aedbaff2b02f13ded390f74e28aa0c5766d32d4c123b8aa6f2025ad3752d16c1`,
+and web `sha256:e6712b3efc869a9ea477429e6561a536ea885bba824cf9a5fe8d14c789785a06`.
+
+Cache qualification passed in
+`/tmp/mesh-runner-stage4-cache-proof/ui-layer-cache.gRXQzD`:
+
+- Cargo/Python-only mutations reran cheap filtering, reused UI warming and
+  browser installation, and preserved all three dependency layer diffIDs.
+- A UI package-manager config mutation reran warming while retaining the
+  cached browser installation.
+- Switching that browser build to UI reused warming and all three physical
+  dependency layers.
+
+The first proof stopped because Docker 29's zero-byte WORKDIR history is
+ambiguous. The corrected helper verifies exact OCI configuration bytes and
+maps `history.empty_layer` to `rootfs.diff_ids`; the Stage 2 mapper's ambiguity
+guard is unchanged. Another retained log exposed a frontend resolver reporting
+DONE then CACHED. The parser now classifies only actual RUN/COPY/export steps
+and still rejects conflicting evidence for those operations. Twelve focused
+fixtures and independent review passed after that correction.
+
+All 21 discovered host suites, ShellCheck, actionlint, and diff checks passed.
+The final retained cache proof also passed an independent offline replay.
+No remote Actions or production qualification is claimed for these new images.
+
+Evidence is retained under `/tmp/mesh-runner-stage4-*`; UI/browser result files
+are in `ui-proof/ui-image.IHIlPh` and `browser-proof/ui-image.RhbdP7` beneath
+that prefix. Images were built from the Stage 4 working tree with checkpoint
+`f7b89b16c9f39fcde411b32ddd169f091859dff7` supplied as runner revision. They
+are development images, not published candidates. No consumer digest changed.
+
 ## Remaining supplemental work
 
-- Add public-only AMD64 UI and browser families through `Dockerfile.ui`, retaining
-  the existing full web image and full-image layer boundaries. Preserve stdlib
-  Python for the isolation audit before checkout. Initial lean consumers are UI
-  quality, UI E2E, and ordinary UI artifacts. Release UI still requires Cargo
-  and Perl through `release-version.sh`; website builds call crate-docs; nightly
-  stability needs the AI runtime. Keep those consumers on full images.
-  Route the closed Dockerfile choice through the family catalog and existing
-  matrix generator. Keep the verifier's seven-argument interface, add explicit
-  capabilities, and qualify native package lifecycle scripts and actual UI tests
-  before adoption. Independent read-only design review is complete.
+- Adopt qualified immutable UI/browser digests once available. Initial lean
+  consumers are UI quality, UI E2E, and ordinary UI artifacts. Release UI still
+  requires Cargo and Perl through `release-version.sh`; website builds call
+  crate-docs; nightly stability needs the AI runtime. Keep those on full images.
 - Establish shared image metadata for digests, tool/dependency identity, and cache
   epochs; update ordinary CI and compiler-seed consumers together after image
-  qualification. Preserve the companion task's release composer rows.
+  qualification. Preserve the companion task's release composer rows. The
+  consumer inventory found a seed eligibility defect: the CPU runtime catalog
+  emits `amd64`, but `ci-linux-runtime-slice.yml` requires `x86_64`. Cover the
+  real planner row behavior; CUDA/ROCm/Vulkan image/epoch mismatches must stay
+  cold. Keep the protected `ci/slices.yml` and `ci/ownership.yml` bytes unchanged
+  in the initial metadata landing. Historical image provenance remains unknown
+  until verified; do not infer it from this runner repository's current HEAD.
 - Complete PR/staging verification parity, per-browser compatibility, backend
   coverage, and representative Actions runtime checks.
 - Promote a retained, verified staged cohort without rebuilding. Bind admission
@@ -141,7 +213,8 @@ Task: `codex://threads/01a07dce-676e-7640-9715-cf40b62790dc`, titled
 - MeshLLM: `/Users/ndizazzo/dev/mesh/worktrees/mesh-release-efficiency`.
   Checkpoint `cd602d6cba0f505fd9e1b4a6b5d1ca261a0032a0`; preserve this work.
 - Packaging: `/Users/ndizazzo/dev/mesh/worktrees/packaging-runner-efficiency`.
-  Checkpoint `0e894a7`, including metrics followup; draft PR #26 passed hosted CI.
+  Checkpoint `253a33e`, including UI/browser metrics classification; draft PR #26
+  passed hosted CI. This task independently reran the 25 shared metrics tests.
 - The owner reported terminal MeshLLM ci-validate success: 828 tests, 821 passes,
   seven expected local PowerShell skips, plus required CI/release/publish checks.
   Packaging reported its full suite, five real Docker tests, and 23 metrics tests
@@ -160,9 +233,16 @@ Task: `codex://threads/01a07dce-676e-7640-9715-cf40b62790dc`, titled
   through the pinned public CPU image, including runtime discovery and client
   readiness. This does not qualify the full release workflow or other platforms.
 
-Stage 3 Docker work is complete. Coordinate the next use of local and native
-carrack Docker with the companion before starting more builds. Native child agents hit an account
-usage limit; the companion root provided the independent Stage 3 review. No branches were pushed, images published,
+The companion reported all five PR #1684 lanes green at `cd602d6c`, then merged
+updated main into its branch at `bea1dda6` and began revalidation. The immutable
+source used by Stage 4 is unaffected. This task's separate consumer worktree is
+`/Users/ndizazzo/dev/mesh/worktrees/mesh-runner-consumers`, branch
+`codex/runner-consumer-images`, still clean at `cd602d6c`.
+
+Stage 4 Docker work is complete; both Docker slots are free. Coordinate
+the next use with the companion. Child agents are available again and have
+independently reviewed Stage 4 image/installers, routing, verifiers, and evidence
+helpers. The companion root provided the independent Stage 3 review. No branches were pushed, images published,
 workflows dispatched, provider flags changed, or primary checkouts modified.
 
 ## Resume procedure

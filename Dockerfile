@@ -87,6 +87,7 @@ ARG RUST_VERSION=1.98.1
 ARG JUST_VERSION=1.57.0
 ARG SCCACHE_VERSION=0.16.0
 ARG OPENAI_NPM_VERSION=7.5.0
+COPY scripts/install-tools-common.sh /usr/local/bin/install-tools-common.sh
 COPY scripts/install-core-tools.sh /usr/local/bin/install-core-tools
 RUN --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-${TARGETARCH},target=/root/.npm,sharing=locked \
     --mount=type=cache,id=mesh-runner-rustup-${RUST_VERSION}-ubuntu24-${TARGETARCH},target=/home/runner/.rustup/downloads,uid=1001,gid=123,mode=0775,sharing=locked \
@@ -173,43 +174,13 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     NODE_PATH=/home/runner/externals/node24/lib/node_modules
 COPY config/playwright-pin.txt /tmp/playwright-pin.txt
-# Install the `playwright` package, not `@playwright/test`: mesh-llm's
-# pnpm-lock.yaml pins `@playwright/test`, but that package hard-depends on
-# an identical `playwright` version (checked: @playwright/test@1.62.1
-# depends on "playwright": "1.62.1", no range), so the pin is equivalent
-# either way. `playwright` ships the same install-deps/install CLI and,
-# critically, resolves as a top-level global package under $(npm root -g)
-# instead of nested under @playwright/test/node_modules/playwright — a
-# global `npm install @playwright/test` alone left `require("playwright")`
-# unresolvable from an arbitrary CWD (confirmed with a local build before
-# choosing this), which is what the verify-runner-image launch check below
-# needs. NODE_PATH makes that global install visible to plain `require()`.
-#
-# /etc/mesh-runner-playwright-version is stamped from `playwright --version`
-# (the installed CLI's own report), not re-printed from the pin file: the
-# whole point of Dockerfile.verify's comparison is catching a mismatch
-# between what config/playwright-pin.txt declares and what npm actually
-# resolved and installed. Echoing the pin back to itself would make that
-# assertion unconditionally true. Take only the first line and require a
-# dotted numeric version: `playwright --version` can share stdout with an
-# npm/node warning, and verify-runner-image.sh only validates the expected
-# side of the comparison (never the actual side), so a loose parse here is
-# the only place a stray line gets caught before it surfaces downstream as
-# a confusing "found 'Version 1.62.1'" on a slow stage run.
+# Share installation and installed-version validation with the lean browser image.
+COPY scripts/install-playwright.sh /usr/local/bin/install-playwright
 RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-web-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-web-${TARGETARCH},target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-web-${TARGETARCH},target=/root/.npm,sharing=locked \
-    playwright_version="$(cat /tmp/playwright-pin.txt)" \
-    && npm install --global "playwright@${playwright_version}" \
-    && mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
-    && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= playwright install-deps chromium \
-    && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD= playwright install chromium \
-    && find "${PLAYWRIGHT_BROWSERS_PATH}" -mindepth 1 -maxdepth 1 -type d -name 'chromium-*' -print -quit \
-       | xargs -r basename > /etc/mesh-runner-chromium-build \
-    && test -s /etc/mesh-runner-chromium-build \
-    && chown -R runner:docker "${PLAYWRIGHT_BROWSERS_PATH}" \
-    && playwright --version | head -n1 | awk '{print $NF}' > /etc/mesh-runner-playwright-version \
-    && grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' /etc/mesh-runner-playwright-version \
+    chmod 0755 /usr/local/bin/install-playwright \
+    && /usr/local/bin/install-playwright /tmp/playwright-pin.txt \
     && rm -f /tmp/playwright-pin.txt
 USER runner
 
@@ -296,13 +267,17 @@ ARG MESH_LLM_REVISION
 ARG RUNNER_IMAGES_REVISION
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
-RUN /usr/local/bin/verify-runner-image \
+COPY config/playwright-pin.txt /tmp/mesh-runner-expected-playwright.txt
+RUN expected_playwright=none \
+    && if [[ "${BACKEND}" == web ]]; then expected_playwright="$(cat /tmp/mesh-runner-expected-playwright.txt)"; fi \
+    && /usr/local/bin/verify-runner-image \
       public \
       "${BACKEND}" \
       "${MESH_LLM_REVISION}" \
       "${CUDA_SERIES}" \
       "${ROCM_VERSION}" \
       "${RUNNER_IMAGES_REVISION}" \
+      "$expected_playwright" \
     && /__e/node24/bin/node -e 'console.log("node ok")'
 
 FROM selected-backend AS self-hosted

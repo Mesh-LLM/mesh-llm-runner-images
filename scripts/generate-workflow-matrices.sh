@@ -21,7 +21,9 @@ if ! jq -e '
     and (length > 0)
     and (length == (unique | length))
     and all(.[]; . == "amd64" or . == "arm64");
-  # Every backend key is required except `environments`, which is optional
+  # Every backend key is required except `environments` and `dockerfile`.
+  # Dockerfile defaults to the full image; lean families select Dockerfile.ui.
+  # The environment list is optional
   # and defaults to every family environment when absent (so an existing
   # descriptor with no `environments` field is byte-identical in behavior).
   # When present it must be a non-empty, duplicate-free subset of the family
@@ -38,18 +40,26 @@ if ! jq -e '
     );
   def backend($family_environments):
     type == "object"
-    and ((keys - ["environments"]) | sort) == ([
+    and ((keys - ["environments", "dockerfile"]) | sort) == ([
       "architectures",
       "cuda_series",
       "id",
       "name",
       "rocm_version"
     ] | sort)
-    and (keys - ["architectures", "cuda_series", "environments", "id", "name", "rocm_version"] | length == 0)
+    and (keys - ["architectures", "cuda_series", "dockerfile", "environments", "id", "name", "rocm_version"] | length == 0)
+    and ((has("dockerfile") | not) or .dockerfile == "Dockerfile" or .dockerfile == "Dockerfile.ui")
     and (has_valid_environments_subset($family_environments))
     and (.id | identifier)
-    and (.name == "cpu" or .name == "vulkan" or .name == "cuda" or .name == "rocm" or .name == "web")
+    and (.name == "cpu" or .name == "vulkan" or .name == "cuda" or .name == "rocm" or .name == "web" or .name == "ui" or .name == "browser")
     and (.architectures | architectures)
+    and (
+      if .name == "ui" or .name == "browser" then
+        .dockerfile == "Dockerfile.ui" and .environments == ["public"]
+      else
+        (.dockerfile // "Dockerfile") == "Dockerfile"
+      end
+    )
     and (
       if .name == "cpu" or .name == "vulkan" then
         .id == .name
@@ -158,7 +168,8 @@ jq -ce '
             backend_name: $backend.name,
             cuda_series: ($backend.cuda_series // "none"),
             rocm_version: ($backend.rocm_version // "none"),
-            architectures: ($backend.architectures | join(","))
+            architectures: ($backend.architectures | join(",")),
+            dockerfile: ($backend.dockerfile // "Dockerfile")
           }
       ];
 
@@ -173,7 +184,7 @@ jq -ce '
           [
             $families[]
             | . as $family
-            | . + {
+            | del(.dockerfile) + {
                 artifact: ("candidate-index-" + .environment + "-" + .backend_id),
                 tag_stem: (.environment + "-" + .backend_id),
                 compatibility_tag_stem: (

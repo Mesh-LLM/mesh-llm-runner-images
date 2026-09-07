@@ -1,5 +1,6 @@
 *
 !Dockerfile
+!Dockerfile.ui
 !Dockerfile.verify
 !config/playwright-pin.txt
 !config/python-requirements.lock
