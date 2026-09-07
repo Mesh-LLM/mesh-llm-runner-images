@@ -18,7 +18,6 @@ ARG ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdc
 FROM ${ACTIONS_RUNNER_BASE_IMAGE} AS toolchain
 
 ARG TARGETARCH
-ARG RUNNER_ENVIRONMENT=public
 ARG NODE_MAJOR=24
 ARG JUST_VERSION=1.57.0
 ARG SCCACHE_VERSION=0.16.0
@@ -27,7 +26,6 @@ ARG OPENAI_NPM_VERSION=7.5.0
 LABEL org.opencontainers.image.source="https://github.com/Mesh-LLM/mesh-llm-runner-images" \
       org.opencontainers.image.description="Reproducible multi-architecture MeshLLM CI environment" \
       org.opencontainers.image.licenses="MIT" \
-      io.mesh-llm.runner.environment="${RUNNER_ENVIRONMENT}" \
       io.mesh-llm.runner.gha-convention="true"
 
 # Note: ImageOS, ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT, and
@@ -54,13 +52,13 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 
 COPY profiles/common.yml /tmp/profiles/common.yml
-COPY profiles/${RUNNER_ENVIRONMENT}.yml /tmp/profiles/environment.yml
 COPY scripts/profile-packages.sh /usr/local/bin/profile-packages
 RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-${TARGETARCH},target=/var/cache/apt,sharing=locked \
     chmod 0755 /usr/local/bin/profile-packages \
     && rm -f /etc/apt/apt.conf.d/docker-clean \
-    && mapfile -t packages < <(profile-packages /tmp/profiles/common.yml /tmp/profiles/environment.yml) \
+    && profile-packages /tmp/profiles/common.yml > /tmp/profiles/packages.txt \
+    && mapfile -t packages < /tmp/profiles/packages.txt \
     && test "${#packages[@]}" -gt 0 \
     && apt-get update \
     && apt-get install -y --no-install-recommends software-properties-common \
@@ -96,19 +94,28 @@ RUN --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-${TARGETARC
        OPENAI_NPM_VERSION="${OPENAI_NPM_VERSION}" \
        /usr/local/bin/install-core-tools
 
-COPY build-context/manifests/${RUNNER_ENVIRONMENT}/ /opt/mesh-llm/manifests/
-COPY scripts/warm-dependencies.sh /usr/local/bin/warm-dependencies
-RUN --mount=type=cache,id=mesh-runner-pip-python3.12-ubuntu24-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
-    chmod 0755 /usr/local/bin/warm-dependencies \
-    && chown -R runner:docker /opt/mesh-llm/manifests \
-    && /usr/local/bin/warm-dependencies /opt/mesh-llm/manifests
-
 COPY scripts/verify-runner-image.sh /usr/local/bin/verify-runner-image
 RUN chmod 0755 /usr/local/bin/verify-runner-image \
     && git lfs install --system
 
 WORKDIR /workspace
 USER runner
+
+# Resolve dependencies once per architecture, independently of SDK installation.
+# Final images copy these stores in independent layers after selecting an SDK.
+FROM toolchain AS dependencies
+USER root
+ARG TARGETARCH
+ENV NPM_CONFIG_CACHE=/home/runner/.npm \
+    npm_config_store_dir=/home/runner/.local/share/pnpm/store
+# Both environments have the same payload; provenance is copied separately.
+COPY build-context/manifests/public/dependencies/ /opt/mesh-llm/manifests/
+COPY scripts/warm-dependencies.sh /usr/local/bin/warm-dependencies
+RUN --mount=type=cache,id=mesh-runner-pip-python3.12-ubuntu24-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
+    chmod 0755 /usr/local/bin/warm-dependencies \
+    && mkdir -p /home/runner/.cargo/git /home/runner/.cargo/registry \
+    && chown -R runner:docker /opt/mesh-llm/manifests /home/runner/.cargo \
+    && /usr/local/bin/warm-dependencies /opt/mesh-llm/manifests
 
 FROM toolchain AS backend-cpu
 
@@ -226,6 +233,33 @@ RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-${BACKEND}-${CUDA_SERIE
     && printf '%s\n' "${CUDA_SERIES}" > /etc/mesh-runner-cuda-series \
     && printf '%s\n' "${ROCM_VERSION}" > /etc/mesh-runner-rocm-version
 ENV MESH_RUNNER_BACKEND=${BACKEND}
+
+# Link layers independently of the SDK snapshot so every backend shares the
+# same dependency content. A lockfile change cannot rerun SDK installation.
+ENV NPM_CONFIG_CACHE=/home/runner/.npm \
+    npm_config_store_dir=/home/runner/.local/share/pnpm/store
+COPY --link --chown=1001:123 --from=dependencies /opt/mesh-llm/ /opt/mesh-llm/
+COPY --link --chown=1001:123 --from=dependencies /home/runner/.cargo/registry/ /home/runner/.cargo/registry/
+COPY --link --chown=1001:123 --from=dependencies /home/runner/.cargo/git/ /home/runner/.cargo/git/
+COPY --link --chown=1001:123 --from=dependencies /home/runner/.npm/ /home/runner/.npm/
+COPY --link --chown=1001:123 --from=dependencies /home/runner/.local/share/pnpm/store/ /home/runner/.local/share/pnpm/store/
+
+ARG RUNNER_ENVIRONMENT=public
+COPY profiles/${RUNNER_ENVIRONMENT}.yml /tmp/profiles/environment.yml
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    profile-packages /tmp/profiles/environment.yml > /tmp/profiles/packages.txt \
+    && mapfile -t packages < /tmp/profiles/packages.txt \
+    && if (( ${#packages[@]} > 0 )); then \
+         apt-get update; \
+         apt-get install -y --no-install-recommends "${packages[@]}"; \
+       fi \
+    && rm -rf /tmp/profiles
+
+COPY build-context/manifests/${RUNNER_ENVIRONMENT}/manifest-index.json \
+     build-context/manifests/${RUNNER_ENVIRONMENT}/source-revision.txt \
+     build-context/manifests/${RUNNER_ENVIRONMENT}/profile.txt /opt/mesh-llm/manifests/
+LABEL io.mesh-llm.runner.environment="${RUNNER_ENVIRONMENT}"
 USER runner
 
 FROM selected-backend AS public

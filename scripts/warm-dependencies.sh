@@ -2,7 +2,9 @@
 set -euo pipefail
 
 manifest_root="${1:-/opt/mesh-llm/manifests}"
-test -f "$manifest_root/manifest-index.json"
+test -f "$manifest_root/dependency-index.json"
+mkdir -p /home/runner/.npm /home/runner/.local/share/pnpm/store
+chown -R runner:docker /home/runner/.npm /home/runner/.local/share/pnpm
 
 if [[ -f "$manifest_root/Cargo.toml" && -f "$manifest_root/Cargo.lock" ]]; then
   runuser -u runner -- env HOME=/home/runner CARGO_HOME=/home/runner/.cargo RUSTUP_HOME=/home/runner/.rustup \
@@ -17,12 +19,15 @@ fi
 
 if [[ -f "$manifest_root/crates/mesh-llm-ui/pnpm-lock.yaml" ]]; then
   runuser -u runner -- env HOME=/home/runner PNPM_HOME=/home/runner/.local/share/pnpm \
-    bash -c "cd '$manifest_root/crates/mesh-llm-ui' && pnpm fetch --frozen-lockfile"
+    npm_config_store_dir=/home/runner/.local/share/pnpm/store \
+    pnpm --dir "$manifest_root/crates/mesh-llm-ui" fetch --frozen-lockfile
+  rm -rf "$manifest_root/crates/mesh-llm-ui/node_modules"
 fi
 
 if [[ -f "$manifest_root/website/package-lock.json" && -f "$manifest_root/website/package.json" ]]; then
-  runuser -u runner -- env HOME=/home/runner npm_config_cache=/home/runner/.npm \
-    bash -c "cd '$manifest_root/website' && npm ci --ignore-scripts --no-audit --no-fund"
+  runuser -u runner -- env HOME=/home/runner NPM_CONFIG_CACHE=/home/runner/.npm \
+    npm --prefix "$manifest_root/website" ci --ignore-scripts --no-audit --no-fund
+  rm -rf "$manifest_root/website/node_modules"
 fi
 
-chown -R runner:docker /opt/mesh-llm /home/runner/.cargo /home/runner/.npm /home/runner/.local 2>/dev/null || true
+chown -R runner:docker /opt/mesh-llm /home/runner/.cargo /home/runner/.npm /home/runner/.local

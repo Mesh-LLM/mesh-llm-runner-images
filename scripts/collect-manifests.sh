@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
+umask 022
 
 usage() {
   echo "usage: collect-manifests.sh --source PATH --output PATH --profile public|self-hosted" >&2
@@ -44,17 +46,38 @@ case "$output_directory" in
     ;;
 esac
 rm -rf "$output_directory"
-mkdir -p "$output_directory"
+dependency_directory="$output_directory/dependencies"
+mkdir -p "$dependency_directory"
 
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 metadata_file="$temporary_directory/cargo-metadata.json"
+manifest_paths="$temporary_directory/manifest-paths.txt"
+target_paths="$temporary_directory/target-paths.tsv"
+tracked_paths="$temporary_directory/tracked-paths"
 inventory_file="$temporary_directory/inventory.tsv"
 json_entries="$temporary_directory/entries.jsonl"
+dependency_inventory="$temporary_directory/dependencies.txt"
+dependency_entries="$temporary_directory/dependencies.jsonl"
 : > "$inventory_file"
 : > "$json_entries"
+: > "$dependency_inventory"
+: > "$dependency_entries"
 
 (cd "$source_repository" && cargo metadata --no-deps --format-version 1) > "$metadata_file"
+# Materialize discovery before consuming it: process-substitution failures do
+# not propagate through a while loop and must not produce a partial index.
+jq -r '.packages[].manifest_path' "$metadata_file" > "$manifest_paths"
+jq -r '
+  .packages[].targets[]
+  | [
+      .src_path,
+      (if any(.kind[]; . == "bin" or . == "custom-build" or . == "example" or . == "test")
+       then "main" else "lib" end)
+    ]
+  | @tsv
+' "$metadata_file" > "$target_paths"
+git -C "$source_repository" ls-files -z > "$tracked_paths"
 
 relative_path() {
   local absolute_path="$1"
@@ -68,9 +91,11 @@ copy_manifest() {
   local ecosystem="$1"
   local relative="$2"
   [[ -f "$source_repository/$relative" ]] || return 0
-  mkdir -p "$output_directory/$(dirname "$relative")"
-  cp -p "$source_repository/$relative" "$output_directory/$relative"
+  mkdir -p "$dependency_directory/$(dirname "$relative")"
+  cp "$source_repository/$relative" "$dependency_directory/$relative"
+  chmod 0644 "$dependency_directory/$relative"
   printf '%s\t%s\n' "$ecosystem" "$relative" >> "$inventory_file"
+  printf '%s\n' "$relative" >> "$dependency_inventory"
 }
 
 for root_file in Cargo.toml Cargo.lock rust-toolchain rust-toolchain.toml; do
@@ -79,42 +104,33 @@ done
 copy_manifest configuration .cargo/config.toml
 
 while IFS= read -r manifest_path; do
-  copy_manifest rust "$(relative_path "$manifest_path")"
-done < <(jq -r '.packages[].manifest_path' "$metadata_file")
+  relative="$(relative_path "$manifest_path")"
+  copy_manifest rust "$relative"
+done < "$manifest_paths"
 
 while IFS=$'\t' read -r target_path target_type; do
   relative="$(relative_path "$target_path")"
-  destination="$output_directory/$relative"
+  destination="$dependency_directory/$relative"
   mkdir -p "$(dirname "$destination")"
   if [[ "$target_type" == main ]]; then
     printf 'fn main() {}\n' > "$destination"
   else
     printf '#![allow(dead_code)]\n' > "$destination"
   fi
-done < <(
-  jq -r '
-    .packages[].targets[]
-    | [
-        .src_path,
-        (if any(.kind[]; . == "bin" or . == "custom-build" or . == "example" or . == "test")
-         then "main" else "lib" end)
-      ]
-    | @tsv
-  ' "$metadata_file"
-)
+  printf '%s\n' "$relative" >> "$dependency_inventory"
+done < "$target_paths"
 
 while IFS= read -r -d '' relative; do
   filename="$(basename "$relative")"
   case "$filename" in
     package.json|package-lock.json|pnpm-lock.yaml|yarn.lock) ecosystem=node ;;
+    .npmrc|pnpm-workspace.yaml) ecosystem=configuration ;;
     go.mod|go.sum) ecosystem=go ;;
     Pipfile|Pipfile.lock|poetry.lock|pyproject.toml|requirements*.txt|uv.lock) ecosystem=python ;;
     *) continue ;;
   esac
   copy_manifest "$ecosystem" "$relative"
-done < <(
-  git -C "$source_repository" ls-files -z
-)
+done < "$tracked_paths"
 
 sha256_file() {
   local path="$1"
@@ -126,13 +142,25 @@ sha256_file() {
 }
 
 sort -u "$inventory_file" | while IFS=$'\t' read -r ecosystem relative; do
-  hash="$(sha256_file "$output_directory/$relative")"
+  hash="$(sha256_file "$dependency_directory/$relative")"
   jq -cn \
     --arg ecosystem "$ecosystem" \
     --arg path "$relative" \
     --arg sha256 "$hash" \
     '{ecosystem: $ecosystem, path: $path, sha256: $sha256}' >> "$json_entries"
 done
+
+# The dependency layer is keyed only by files needed to resolve packages.
+# Source revisions and runner profiles belong to the separate audit files.
+sort -u "$dependency_inventory" | while IFS= read -r relative; do
+  hash="$(sha256_file "$dependency_directory/$relative")"
+  jq -cn \
+    --arg path "$relative" \
+    --arg sha256 "$hash" \
+    '{path: $path, sha256: $sha256}' >> "$dependency_entries"
+done
+jq -s '{schema: 1, files: .}' "$dependency_entries" \
+  > "$dependency_directory/dependency-index.json"
 
 revision="$(git -C "$source_repository" rev-parse HEAD)"
 jq -s \

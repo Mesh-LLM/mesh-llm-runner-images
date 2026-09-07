@@ -20,9 +20,20 @@ The image has four layers of configuration:
 1. `profiles/common.yml` is the shared operating-system toolchain found in MeshLLM CI and build scripts.
 2. `profiles/backends/*.yml` contains CPU, Vulkan, CUDA, ROCm, or Web SDK packages; the owning installer handles vendor repositories and compilers. `web`'s stays an empty `apt.packages` list — Chromium's system dependencies are `playwright install-deps chromium`'s to own, not ours; see below.
 3. `profiles/public.yml` and `profiles/self-hosted.yml` contain environment-only additions.
-4. `scripts/prepare-build-context.sh` checks out the requested MeshLLM revision, discovers its Rust, Node, Python, and Go manifests, and creates one bundle per runner environment. The Docker build injects the matching bundle and warms Cargo, pnpm, npm, and Python dependencies.
+4. `scripts/prepare-build-context.sh` reads a MeshLLM checkout, discovers its Rust, Node, Python, and Go manifests, and creates one bundle per runner environment. The Docker build warms Cargo, pnpm, npm, and Python dependencies in a shared stage.
 
-The YAML profiles use a deliberately small schema (`schema`, `profile`, and `apt.packages`) that is parsed by portable Bash without Python or Ruby. The manifest bundle is content-addressed in `manifest-index.json`. Cargo target stubs retain the complete workspace graph without copying or publishing MeshLLM source code in the runner image.
+The YAML profiles use a deliberately small schema (`schema`, `profile`, and `apt.packages`) that is parsed by portable Bash without Python or Ruby. Each bundle separates `dependencies/` from its audit files. `dependencies/dependency-index.json` hashes the manifests, package-manager configuration, and generated Cargo target stubs. `manifest-index.json`, `source-revision.txt`, and `profile.txt` record provenance outside that payload. Cargo target stubs retain the workspace graph without copying MeshLLM source code into the image.
+
+The common toolchain feeds independent SDK and dependency stages. Final images
+copy the populated dependency stores with `COPY --link`, then add environment
+packages and provenance. A source-only revision change preserves the dependency
+cache; a dependency change preserves SDK installation. Both environments use the
+same dependency payload and stores.
+
+The npm cache and pnpm store have explicit paths under `/home/runner`, so Actions'
+`HOME=/github/home` does not hide them. Warming removes temporary `node_modules`
+trees before the layer is saved. Jobs install their own checkout from the baked
+stores, which are writable by root and runner.
 
 ### Base image
 
@@ -148,5 +159,19 @@ suite. CI uses the same entrypoint and automatically includes every
 `tests/*.test.sh` suite. These tests use temporary fixtures and a mock registry.
 `scripts/verify-end-to-end.sh --all-backends` checks every catalog family,
 including public web, against its declared SDK and Playwright versions.
+
+For a locally built full image, `bash tests/integration/dependency-cache.sh IMAGE`
+checks offline npm and pnpm installation as root and runner with Actions' home
+directory. It uses fresh containers with networking disabled and no host cache
+mounts. These Docker integration checks are opt-in and separate from the host
+contract suite.
+
+After preparing manifest bundles, run
+`bash tests/integration/layer-cache.sh . --with-vulkan` to check source-only
+reuse, dependency invalidation, and shared dependency layers across Vulkan and
+CPU. It retains local images, fixture context, build logs, and parsed evidence.
+`--evidence-only PROOF_DIRECTORY` rechecks those logs and local image identities
+without rebuilding. Layer identity is measured with filesystem diffIDs; it does
+not report compressed registry bytes or infer time saved.
 
 See `docs/AUDIT.md` for the source audit and `docs/OPERATIONS.md` for publication and registry-verification steps.
