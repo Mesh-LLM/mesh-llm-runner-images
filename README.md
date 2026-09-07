@@ -143,4 +143,10 @@ MeshLLM and runner-images source revisions remain full OCI labels and candidate-
 - `examples/workflows/public-github-hosted.yml` runs on `ubuntu-24.04` with the public image through job-level `container:`.
 - `scripts/verify-end-to-end.sh` verifies the registry manifest lists and executes every supported architecture.
 
+Run `bash scripts/test.sh` with Bash 4 or newer for the complete local contract
+suite. CI uses the same entrypoint and automatically includes every
+`tests/*.test.sh` suite. These tests use temporary fixtures and a mock registry.
+`scripts/verify-end-to-end.sh --all-backends` checks every catalog family,
+including public web, against its declared SDK and Playwright versions.
+
 See `docs/AUDIT.md` for the source audit and `docs/OPERATIONS.md` for publication and registry-verification steps.

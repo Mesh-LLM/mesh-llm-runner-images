@@ -78,7 +78,7 @@ while IFS= read -r entry; do
   if [[ "$direction" == target ]]; then
     digest="$(jq -er '.target_digest' <<< "$entry")"
   else
-    digest="$(jq -er '.previous_digest // empty' <<< "$entry")"
+    digest="$(jq -r '.previous_digest // empty' <<< "$entry")"
     [[ -n "$digest" ]] || continue
   fi
   manifest_json="$(
@@ -100,7 +100,7 @@ while IFS= read -r entry; do
   if [[ "$direction" == target ]]; then
     digest="$(jq -er '.target_digest' <<< "$entry")"
   else
-    digest="$(jq -er '.previous_digest // empty' <<< "$entry")"
+    digest="$(jq -r '.previous_digest // empty' <<< "$entry")"
     if [[ -z "$digest" ]]; then
       echo "rollback leaves previously absent tag unchanged: $tag" >&2
       continue

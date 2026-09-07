@@ -65,7 +65,7 @@ while IFS= read -r changed_file; do
     scripts/collect-manifests.sh|scripts/install-core-tools.sh|scripts/prepare-build-context.sh|scripts/profile-packages.sh|scripts/verify-runner-image.sh|scripts/warm-dependencies.sh)
       all_families=true
       ;;
-    .github/*|docs/*|tests/*|README.md|LICENSE|scripts/generate-*|scripts/install-actionlint.sh|scripts/plan-pr-families.sh|scripts/promote-*|scripts/reconcile-*|scripts/select-*|scripts/validate-*|scripts/verify-end-to-end.sh)
+    .github/*|docs/*|tests/*|README.md|LICENSE|scripts/generate-*|scripts/install-actionlint.sh|scripts/plan-pr-families.sh|scripts/promote-*|scripts/reconcile-*|scripts/select-*|scripts/test.sh|scripts/validate-*|scripts/verify-end-to-end.sh)
       # Workflow, policy, test, and documentation changes still receive the
       # always-on public CPU AMD64 contract row below.
       ;;

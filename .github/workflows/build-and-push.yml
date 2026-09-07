@@ -133,13 +133,8 @@ jobs:
       - name: Validate workflow definitions
         run: actionlint -config-file .github/actionlint.yaml
 
-      - name: Test immutable candidate contract
-        run: |
-          tests/candidate-promotion.test.sh
-          tests/cohort-promotion.test.sh
-          tests/promotion-tags.test.sh
-          tests/workflow-matrix.test.sh
-          tests/docker-context.test.sh
+      - name: Test runner image contracts
+        run: bash scripts/test.sh
 
       - name: Lint shell sources
         run: |
