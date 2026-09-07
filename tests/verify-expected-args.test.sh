@@ -24,7 +24,7 @@ dockerfile_verify="$repository_root/Dockerfile.verify"
 stage_workflow="$repository_root/.github/workflows/stage-image-family.yml"
 
 declared_args="$(
-  grep -oE '^ARG EXPECTED_[A-Z_]+' "$dockerfile_verify" |
+  grep -oE '^ARG (EXPECTED_[A-Z_]+|VERIFIER_REVISION)' "$dockerfile_verify" |
     awk '{print $2}' |
     sort -u
 )"

@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "common": {"node_major": 24, "pnpm": "10.34.5", "just": "1.57.0"},
+  "full": {"rust": "1.98.1", "sccache": "0.16.0", "openai_npm": "7.5.0"},
+  "browser": {"playwright": "1.62.1"}
+}

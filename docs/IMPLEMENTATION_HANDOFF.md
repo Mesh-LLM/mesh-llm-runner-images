@@ -9,7 +9,7 @@ Complete the remaining runner-image optimizations from the revised audit in
 `/Users/ndizazzo/dev/mesh/worktrees/runner-image-improvements`, branch
 `codex/runner-image-improvements`. Work in stages and require focused tests,
 appropriate real image checks, and independent review before advancing.
-Stages 1–4 are complete; continue with shared image and cache identity. Coordinate tests and consumer integration
+Stages 1–5 are complete; continue with PR/staging verification parity. Coordinate tests and consumer integration
 with task `01a07dce-676e-7640-9715-cf40b62790dc`, preserve its release changes and
 frozen worktrees, and wait for any changes that invalidate a test's inputs.
 Keep AMD64 CUDA compilation on the existing desk k3s ARC runner. Complete only
@@ -168,17 +168,76 @@ that prefix. Images were built from the Stage 4 working tree with checkpoint
 `f7b89b16c9f39fcde411b32ddd169f091859dff7` supplied as runner revision. They
 are development images, not published candidates. No consumer digest changed.
 
+## Stage 5 identity foundation complete
+
+Implemented independent tool/cache policy files, a runtime collector, strict
+OCI receipt binding, staged receipt export, and an opt-in local offline proof.
+The separate MeshLLM consumer worktree adds a checked image/epoch/seed/SDK
+catalog without changing workflow, protected catalog, image pin, or cache-key
+bytes. Existing Python test discovery checks its real workflow census and
+planner output. Historical receipts, provenance and workload coverage stay null.
+See `docs/RUNNER_IDENTITY.md` for the schema and trust limits.
+
+Producer validation passed all 23 discovered suites, ShellCheck, actionlint and
+diff checks. Subsequent targeted improvements passed 15 collector tests and 19
+binder tests, including all 23 actual catalog platform rows. Independent review
+caught and fixed omitted/unindexed dependency inputs, unsupported workflow
+container syntax/extensions, changed observed tools with recomputed fingerprints,
+and the real ROCm major/minor naming convention. Native checks did not rebuild
+or change an image.
+
+Final native AMD64 offline evidence, independently replayed against the exact
+captured collector/pins/policy/Python lock:
+
+- UI: `/tmp/mesh-runner-stage5-final-identities/runner-identity.aEzgtg`.
+- Browser: `/tmp/mesh-runner-stage5-final-identities/runner-identity.ndG48f`.
+- Full web: `/tmp/mesh-runner-stage5-final-identities/runner-identity.x357Vr`.
+- Self-hosted CPU as its default runner user:
+  `/tmp/mesh-runner-stage5-self-hosted-identity/runner-identity.IsxjjZ`.
+
+These prove runtime collection, exact Python closure, complete dependency input
+inventory and OCI binding. They do not qualify hosted Depot scratch export or
+registry publication. The three Stage 4 images retain their original source
+labels; the self-hosted image uses the frozen Stage 3 source
+`a11e2ba4ca55b36361c19aa144f5f7bc45abd8a4` and runner checkpoint `f80dd2d`.
+All local proof results explicitly preserve those qualification limits.
+
+Consumer focused tests pass 35 cases. The first full gate ran 863 tests with
+seven expected PowerShell skips and one unrelated host error: Python 3.13's
+`Path.is_file()` raised on macOS `/usr/sbin/weakpass_edit` during the unchanged
+Windows dependency test. The same seven focused tests pass under Python 3.14;
+the complete gate passed with `uv run --python 3.14 --with PyYAML just
+ci-validate`: 863 tests, 856 passes, seven expected skips, followed by all
+CI/release/console/publish consistency checks. The unchanged Homebrew Rust/LLD
+installation emitted deployment-target linker warnings while building xtask;
+no Rust source was changed. Logs: `/tmp/mesh-runner-stage5-consumer-ci-validate.log`
+and `/tmp/mesh-runner-stage5-consumer-ci-validate-python314.log`.
+
+The CPU seed guard mismatch is documented but deliberately unchanged. Actual
+trusted seed logs show Cargo-native C/C++ objects, but no llama.cpp runtime
+build; the runtime made 319 C/C++ requests with zero cold hits. A spelling fix
+alone could turn a harmless cold result into a failed warm-hit gate. Enable
+only after a bounded real existing-seed runtime canary proves hits and total
+restore/build benefit. Preserve the 1% runtime floor, 2 GiB cap, provider deny,
+and image/epoch guards. Do not label the seed strictly Rust-only.
+
+Next-stage read-only plan: use one test-only wrapper and independent expectations
+in full public-test, self-hosted-test, lean public-test and Dockerfile.verify;
+pass seven expectations and a separate verifier revision, run with networking
+disabled, retain existing backend compilation and Chromium checks. Strengthen
+end-to-end alias resolution to immutable digests separately. No next-stage
+implementation can now begin.
+
 ## Remaining supplemental work
 
 - Adopt qualified immutable UI/browser digests once available. Initial lean
   consumers are UI quality, UI E2E, and ordinary UI artifacts. Release UI still
   requires Cargo and Perl through `release-version.sh`; website builds call
   crate-docs; nightly stability needs the AI runtime. Keep those on full images.
-- Establish shared image metadata for digests, tool/dependency identity, and cache
-  epochs; update ordinary CI and compiler-seed consumers together after image
+- Complete rollout of the shared identity foundation; update ordinary CI and compiler-seed consumers together after image
   qualification. Preserve the companion task's release composer rows. The
   consumer inventory found a seed eligibility defect: the CPU runtime catalog
-  emits `amd64`, but `ci-linux-runtime-slice.yml` requires `x86_64`. Cover the
+  emits `amd64`, but `ci-linux-runtime-slice.yml` requires `x86_64`. Qualify workload coverage before changing eligibility. Cover the
   real planner row behavior; CUDA/ROCm/Vulkan image/epoch mismatches must stay
   cold. Keep the protected `ci/slices.yml` and `ci/ownership.yml` bytes unchanged
   in the initial metadata landing. Historical image provenance remains unknown
@@ -237,7 +296,10 @@ The companion reported all five PR #1684 lanes green at `cd602d6c`, then merged
 updated main into its branch at `bea1dda6` and began revalidation. The immutable
 source used by Stage 4 is unaffected. This task's separate consumer worktree is
 `/Users/ndizazzo/dev/mesh/worktrees/mesh-runner-consumers`, branch
-`codex/runner-consumer-images`, still clean at `cd602d6c`.
+`codex/runner-consumer-images`, checkpoint `dbdedc4aeb0c1edbcd638f9bd9dd9feb1ff01a71`
+based on `cd602d6c`, with the Stage 5 catalog, script/tests and documentation.
+Existing workflows and protected catalogs
+remain unchanged.
 
 Stage 4 Docker work is complete; both Docker slots are free. Coordinate
 the next use with the companion. Child agents are available again and have

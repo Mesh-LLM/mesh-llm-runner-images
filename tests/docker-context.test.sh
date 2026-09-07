@@ -19,12 +19,14 @@ printf 'script' > "$temporary_directory/scripts/tool.sh"
 printf 'manifest' > "$temporary_directory/build-context/manifests/index.json"
 printf '1.62.1' > "$temporary_directory/config/playwright-pin.txt"
 printf 'package==1.0.0' > "$temporary_directory/config/python-requirements.lock"
+printf 'pins' > "$temporary_directory/config/tool-pins.json"
+printf 'policy' > "$temporary_directory/config/cache-policy.json"
 printf 'ignored' > "$temporary_directory/ignored.txt"
 
 metrics="$(bash "$measure_context" "$temporary_directory")"
 jq -e \
-  --argjson expected_bytes "$((10 + 4 + 6 + 7 + 6 + 8 + 6 + 14))" \
-  '.schema == 1 and .content_bytes == $expected_bytes and .file_count == 8' \
+  --argjson expected_bytes "$((10 + 4 + 6 + 7 + 6 + 8 + 6 + 14 + 4 + 6))" \
+  '.schema == 1 and .content_bytes == $expected_bytes and .file_count == 10' \
   <<< "$metrics" >/dev/null
 
 mkdir -p \

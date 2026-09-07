@@ -508,9 +508,11 @@ jobs:
 
       - name: Verify exact staged platform digest
         if: inputs.execution_mode != 'validate'
+        id: verify
         shell: bash
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+          CANDIDATE_DESCRIPTOR: ${{ steps.candidate.outputs.descriptor }}
           PLATFORM: ${{ matrix.platform }}
           ENVIRONMENT: ${{ inputs.environment }}
           BACKEND_NAME: ${{ inputs.backend_name }}
@@ -520,20 +522,50 @@ jobs:
           RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
         run: |
           set -euo pipefail
+          verifier_revision="$(git rev-parse HEAD)"
+          identity_directory="$RUNNER_TEMP/runner-identity"
+          mkdir -p "$identity_directory"
           depot build \
             --project "$DEPOT_PROJECT_ID" \
             --file Dockerfile.verify \
+            --target identity-output \
             --platform "$PLATFORM" \
             --build-arg "CANDIDATE_IMAGE=${IMAGE}@${DIGEST}" \
+            --build-arg "VERIFIER_REVISION=${verifier_revision}" \
             --build-arg "EXPECTED_ENVIRONMENT=${ENVIRONMENT}" \
             --build-arg "EXPECTED_BACKEND=${BACKEND_NAME}" \
             --build-arg "EXPECTED_MESH_REVISION=${MESH_REVISION}" \
             --build-arg "EXPECTED_RUNNER_IMAGES_REVISION=${RUNNER_IMAGES_REVISION}" \
             --build-arg "EXPECTED_CUDA_SERIES=${CUDA_SERIES}" \
             --build-arg "EXPECTED_ROCM_VERSION=${ROCM_VERSION}" \
-            --output type=cacheonly \
+            --metadata-file "$identity_directory/verification-build.json" \
+            --output "type=local,dest=$identity_directory/runtime" \
             --progress plain \
             .
+          # Preserve exact registry bytes for digest and descriptor-size checks.
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --raw \
+            > "$identity_directory/index.json"
+          child_digest="$(jq -er '.child_digest' "$CANDIDATE_DESCRIPTOR")"
+          docker buildx imagetools inspect "${IMAGE}@${child_digest}" --raw \
+            > "$identity_directory/manifest.json"
+          python3 scripts/bind-runner-identity.py \
+            --runtime "$identity_directory/runtime/runtime-identity.json" \
+            --candidate "$CANDIDATE_DESCRIPTOR" \
+            --index "$identity_directory/index.json" \
+            --manifest "$identity_directory/manifest.json" \
+            --expected-directory config \
+            --verifier-revision "$verifier_revision" \
+            --output "$identity_directory/identity.json"
+          echo "receipt=$identity_directory/identity.json" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified runner identity
+        if: inputs.execution_mode != 'validate'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runner-identity-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}
+          path: ${{ steps.verify.outputs.receipt }}
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload verified platform candidate
         if: inputs.execution_mode != 'validate'

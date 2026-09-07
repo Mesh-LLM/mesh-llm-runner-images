@@ -202,3 +202,7 @@ the checked-in lock and exactly its runtime packages, then runs `pip check`
 with networking disabled. Run it on both architectures when refreshing the lock.
 
 See `docs/AUDIT.md` for the source audit and `docs/OPERATIONS.md` for publication and registry-verification steps.
+
+See [runner image identity](docs/RUNNER_IDENTITY.md) for verified tool and
+dependency receipts, OCI digest binding, cache compatibility limits, and the
+opt-in offline identity check.

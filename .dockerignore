@@ -4,6 +4,8 @@
 !Dockerfile.verify
 !config/playwright-pin.txt
 !config/python-requirements.lock
+!config/tool-pins.json
+!config/cache-policy.json
 !profiles/**
 !scripts/**
 !build-context/**
