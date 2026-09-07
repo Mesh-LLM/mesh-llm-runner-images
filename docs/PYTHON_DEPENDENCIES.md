@@ -27,5 +27,7 @@ python3 -m venv /tmp/mesh-python-lock-refresh
 Review the complete version diff before replacing the checked-in lock. Build
 and verify the CPU image on both architectures, including the source requirement
 probe and existing Python import checks. The opt-in dependency-cache integration
-test additionally checks venv permissions for both root and runner. A successful
+test additionally checks venv permissions for both root and runner. Run
+`bash tests/integration/python-lock.sh IMAGE` to compare every installed runtime
+package against the source lock and check the closure without network access. A successful
 resolution on one architecture alone does not qualify the shared lock.

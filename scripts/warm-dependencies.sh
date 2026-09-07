@@ -23,16 +23,8 @@ python3 -m venv /opt/mesh-llm/venv
   -r "$python_lock"
 /opt/mesh-llm/venv/bin/pip check
 if [[ -f "$manifest_root/ci/requirements-ci-python.txt" ]]; then
-  python_validation_report="$(mktemp)"
-  if ! /opt/mesh-llm/venv/bin/pip install --disable-pip-version-check \
-      --dry-run --no-index --report "$python_validation_report" \
-      -r "$manifest_root/ci/requirements-ci-python.txt" \
-    || ! jq -e '.install == []' "$python_validation_report" >/dev/null; then
-    rm -f "$python_validation_report"
-    echo "MeshLLM Python requirements are not satisfied by the frozen runtime; refresh config/python-requirements.lock (see docs/PYTHON_DEPENDENCIES.md)" >&2
-    exit 1
-  fi
-  rm -f "$python_validation_report"
+  /usr/local/bin/verify-python-requirements /opt/mesh-llm/venv/bin/pip \
+    "$manifest_root/ci/requirements-ci-python.txt"
 fi
 
 if [[ -f "$manifest_root/crates/mesh-llm-ui/pnpm-lock.yaml" ]]; then

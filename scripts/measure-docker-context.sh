@@ -13,6 +13,8 @@ repository_root="${1:-.}"
 context_files=(
   "$repository_root/Dockerfile"
   "$repository_root/Dockerfile.verify"
+  "$repository_root/config/playwright-pin.txt"
+  "$repository_root/config/python-requirements.lock"
 )
 context_listing="$(mktemp)"
 trap 'rm -f "$context_listing"' EXIT

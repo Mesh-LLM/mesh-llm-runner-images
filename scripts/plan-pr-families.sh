@@ -62,7 +62,7 @@ while IFS= read -r changed_file; do
     profiles/backends/web.yml)
       web_backend=true
       ;;
-    scripts/collect-manifests.sh|scripts/install-core-tools.sh|scripts/prepare-build-context.sh|scripts/profile-packages.sh|scripts/verify-runner-image.sh|scripts/warm-dependencies.sh)
+    scripts/collect-manifests.sh|scripts/install-core-tools.sh|scripts/prepare-build-context.sh|scripts/profile-packages.sh|scripts/verify-runner-image.sh|scripts/verify-python-requirements.sh|scripts/warm-dependencies.sh)
       all_families=true
       ;;
     .github/*|docs/*|tests/*|README.md|LICENSE|scripts/generate-*|scripts/install-actionlint.sh|scripts/plan-pr-families.sh|scripts/promote-*|scripts/reconcile-*|scripts/select-*|scripts/test.sh|scripts/validate-*|scripts/verify-end-to-end.sh)

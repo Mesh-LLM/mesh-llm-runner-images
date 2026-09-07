@@ -47,6 +47,13 @@ and 24 runtimes under `/home/runner/externals/node{20,24}/bin`.
 `docker-ce-cli` is no longer apt-installed because the base already ships a
 compatible Docker client.
 
+The self-hosted target reuses that same runner installation and its entrypoint.
+The base digest owns the runner and bundled Node versions. `PNPM_VERSION` and
+`RUST_VERSION` pin the additional tools, and `config/python-requirements.lock`
+pins the Python runtime dependency closure. Rebuilding validates installed tool
+versions and checks that the selected MeshLLM Python requirements need no changes
+to that closure. See `docs/PYTHON_DEPENDENCIES.md` for lock refreshes.
+
 Trusted staging/promotion may replace only the registry/repository portion with
 a Depot Registry pull-through mirror while retaining the exact upstream digest.
 The opt-in gate, repository mapping, short-lived pull-token authentication, and
@@ -173,5 +180,13 @@ CPU. It retains local images, fixture context, build logs, and parsed evidence.
 `--evidence-only PROOF_DIRECTORY` rechecks those logs and local image identities
 without rebuilding. Layer identity is measured with filesystem diffIDs; it does
 not report compressed registry bytes or infer time saved.
+
+`bash tests/integration/runner-installation.sh SELF_HOSTED_IMAGE EXPECTED_VERSION`
+checks the inherited runner installation, both Node convention paths, and the
+actual self-hosted entrypoint with networking disabled.
+
+`bash tests/integration/python-lock.sh IMAGE` verifies that the image contains
+the checked-in lock and exactly its runtime packages, then runs `pip check`
+with networking disabled. Run it on both architectures when refreshing the lock.
 
 See `docs/AUDIT.md` for the source audit and `docs/OPERATIONS.md` for publication and registry-verification steps.
