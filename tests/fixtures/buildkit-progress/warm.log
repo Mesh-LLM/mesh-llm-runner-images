@@ -1,0 +1,16 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 86B done
+#1 DONE 0.0s
+
+#2 [internal] load .dockerignore
+#2 transferring context: 2B done
+#2 DONE 0.0s
+
+#3 [internal] load build context
+#3 transferring context: 32B done
+#3 DONE 0.0s
+
+#4 [1/1] COPY payload.txt /proof/payload.txt
+#4 CACHED

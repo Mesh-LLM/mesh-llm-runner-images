@@ -74,6 +74,32 @@
       "environments": [
         "public"
       ]
+    },
+    {
+      "id": "ui",
+      "name": "ui",
+      "cuda_series": null,
+      "rocm_version": null,
+      "architectures": [
+        "amd64"
+      ],
+      "environments": [
+        "public"
+      ],
+      "dockerfile": "Dockerfile.ui"
+    },
+    {
+      "id": "browser",
+      "name": "browser",
+      "cuda_series": null,
+      "rocm_version": null,
+      "architectures": [
+        "amd64"
+      ],
+      "environments": [
+        "public"
+      ],
+      "dockerfile": "Dockerfile.ui"
     }
   ],
   "aliases": [
@@ -95,7 +121,19 @@
         "arm64"
       ],
       "artifact": "candidate-index-self-hosted-compatibility",
-      "tag_stem": "self-hosted"
+      "tag_stem": "self-hosted",
+      "sources": [
+        {
+          "environment": "self-hosted",
+          "backend_id": "cuda12",
+          "architecture": "amd64"
+        },
+        {
+          "environment": "self-hosted",
+          "backend_id": "cpu",
+          "architecture": "arm64"
+        }
+      ]
     }
   ]
 }

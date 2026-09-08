@@ -8,8 +8,8 @@
 4. Confirm CPU, Vulkan, and CUDA indexes contain AMD64 and ARM64 children.
 5. Confirm ROCm indexes contain the supported AMD64 child.
 6. Confirm `stage` moved no timestamp, source-compatibility, content, or `latest` tag.
-7. Run `promote` explicitly, or allow the trusted weekly schedule to do so.
-8. Confirm versioned/content promotions and attestations succeed, then retain the generated latest-cohort manifest before reconciliation starts.
+7. Dispatch `promote` with the successful stage run's `staged_run_id` and exact `staged_run_attempt`, or let the weekly schedule stage and promote a new cohort.
+8. Confirm staging attestations and versioned/content promotions succeed, then retain the generated latest-cohort manifest before reconciliation starts.
 9. Resolve the selected tag to its immutable OCI digest before updating a consumer.
 
 Candidate tags are run-scoped reachability handles. Do not promote from a candidate tag or rebuild during publication; use the validated descriptor's exact digest. A failed candidate or versioned promotion leaves existing `latest` tags unchanged.
@@ -18,7 +18,7 @@ The three execution modes are separate contracts:
 
 - `validate` performs no registry login or package write and is the manual default;
 - `stage` is main-only and pushes run-scoped candidates, exact-digest verification, and complete family indexes without moving production aliases; and
-- `promote` is main-only and consumes the same-run verified descriptors before moving versioned aliases and reconciling `latest`.
+- manual `promote` is main-only and admits an exact successful retained run attempt, without resolving `mesh_ref` or rebuilding; the weekly schedule stages and seals its own verified cohort before publication.
 
 Main pushes use `stage`; the weekly default-branch schedule uses `promote`. A feature-branch dispatch cannot stage or promote, and a pull request cannot select a mutation mode.
 
@@ -35,10 +35,10 @@ migration:
 
 The called workflow requires that exact checked-in project ID, and both reusable-workflow
 call sites grant only `contents: read` plus `id-token: write`; staging also has
-the existing `packages: write`. Depot's project cache is automatic, persistent,
+`packages: write` and `attestations: write` for provenance produced during staging. Depot's project cache is automatic, persistent,
 and shared by builds authorized for that project. Public fork pull requests are
 isolated by Depot and receive no project-cache read or write access. Trusted
-staging and promotion authenticate to GHCR locally, then the remote builder
+staging authenticates to GHCR locally, then the remote builder
 pushes each immutable platform candidate directly to GHCR. There is no
 `type=gha` cache import or export.
 
@@ -141,12 +141,44 @@ of the relevant layers.
 
 ## Tag mutability
 
-- Timestamp tags identify a publication run.
+- Timestamp tags retain the original staging timestamp, including on later promotion or retry.
 - `*-sha-<12-character MeshLLM revision>` remains a compatibility alias. A later runner-images revision for the same MeshLLM revision may intentionally move it.
 - `*-digest-sha256-<64-hex manifest digest>` is the immutable content tag. Source revisions remain full OCI labels and descriptor fields; they are not collision-proof content identity when provenance or resolved packages vary.
 - `*-latest` is an eventual multi-tag view. Before changing it, CI uploads a 14-day cohort manifest containing every target and previous digest. `scripts/reconcile-image-cohort.sh MANIFEST target` converges an interrupted promotion; `previous` restores recorded prior digests where a prior tag existed.
 
-Latest reconciliation is deliberately serialized after the complete versioned cohort and attestations succeed. The registry cannot atomically move all family tags, so consumers that need an atomic release must use the immutable digests recorded in the cohort manifest rather than observing `latest` during reconciliation.
+One `runner-image-publication` concurrency group covers versioned promotion, the previous-latest snapshot, and reconciliation. Staging does not take this lock. `queue: max` and `cancel-in-progress: false` allow up to 100 pending publications without replacement; GitHub cancels additional arrivals. Latest reconciliation starts only after the complete versioned cohort succeeds, with build attestations already created by the original stage attempt. The registry cannot atomically move all family tags, so consumers that need an atomic release must use the immutable digests recorded in the cohort manifest rather than observing `latest` during reconciliation.
+
+## Retained-cohort admission
+
+Every staging attempt retains `staged-cohort-RUN_ID-ATTEMPT` for 14 days. It
+contains the original source revisions, catalog identity, all 16 index
+candidates, and all 23 platform receipts with their exact OCI metadata bytes.
+Platform, identity, and index artifacts include the attempt in their names.
+A partial retry cannot silently reuse another attempt's evidence; rerun all
+staging jobs to create a complete new attempt.
+
+Manual promotion checks the GitHub API for the exact attempt's successful
+conclusion, repository and head repository, main branch, workflow path and ID,
+and source SHA. It downloads one unexpired immutable artifact ID, validates
+its archive digest and size, then parses only `staged-cohort.json`. The current
+checkout supplies all executable helpers. Admission requires the current
+catalog and tool/cache policy and independently re-binds each receipt to its
+retained registry bytes. Missing, extra, mixed-source, expired, or incompatible
+cohorts fail before registry writes. Use a fresh stage when policy has changed.
+
+The same-running-attempt exception is available only to the seal job after
+all staging dependencies succeed. External manual admission always requires
+a completed successful attempt. Build attestations belong to the original
+stage; promotion does not assert that its current checkout built old images.
+
+Local tests cover admission failures, immutable digest reuse, publication retry,
+and failure before latest writes. Hosted artifact admission, provenance, and
+concurrent queue behavior still require a trusted canary before rollout.
+GitHub documents [the concurrency queue](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+Pinned actionlint 1.7.12 lacks that key, so `.github/actionlint.yaml` suppresses
+only its exact unknown-queue diagnostic in the caller workflow. The cohort
+test enforces the complete fixed lock mapping. Remove this exception when the
+pinned linter supports it.
 
 ## Candidate retention
 
@@ -171,9 +203,9 @@ supported platform. If GHCR is private, authenticate before running it.
 Restore the previous immutable digest in the owning consumer repository. Do not
 retag an existing image or use a mutable tag as a rollback mechanism.
 
-## Bumping the baked Playwright/Chromium version (`public-web`)
+## Bumping the baked Playwright/Chromium version
 
-The `web` backend bakes a specific Chromium build, declared once in
+The `web` and `browser` backends bake a specific Chromium build, declared once in
 `config/playwright-pin.txt` (currently the `playwright` package version, which
 mesh-llm's pinned `@playwright/test` version always matches exactly — Playwright
 ships those two packages in lockstep). This image is the stable side of that
@@ -189,10 +221,10 @@ inside the container before running `pnpm run test:e2e` (see
 second.**
 
 1. Bump `config/playwright-pin.txt` here, land it, and run this repo's
-   publication order above through `promote` so a new `public-web` digest
-   exists in the registry.
+   publication order above through `promote` so new `public-web` and
+   `public-browser` digests exist in the registry.
 2. Only then bump `@playwright/test` in `crates/mesh-llm-ui/pnpm-lock.yaml`
-   and the consumed `public-web` digest in mesh-llm, in the same PR.
+   and each consumed browser-capable image digest in mesh-llm, in the same PR.
 
 Doing it in the other order — bumping mesh-llm's lockfile first — leaves
 `ui_e2e`'s preflight version check failing on `main` with no image to point at
@@ -200,4 +232,4 @@ yet; that check is deliberately strict (mode C in the runner-images design:
 it fails loudly on a mismatch rather than letting Playwright silently
 re-download a browser to match its own lockfile, which is exactly the apt
 call this backend exists to remove). If it blocks a bump, the fix is always
-promoting the new `public-web` image, never loosening the check.
+promoting the corresponding browser-capable image with the new pin.

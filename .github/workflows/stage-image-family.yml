@@ -15,6 +15,11 @@ on:
         description: Docker backend stage name
         type: string
         required: true
+      dockerfile:
+        description: Catalog-selected Dockerfile or Dockerfile.ui
+        type: string
+        required: false
+        default: Dockerfile
       cuda_series:
         description: CUDA series or none
         type: string
@@ -75,6 +80,16 @@ jobs:
     timeout-minutes: 60
     env:
       DEPOT_PROJECT_ID: mzm95zcv7p
+      METRICS_REPOSITORY: ${{ github.repository }}
+      METRICS_WORKFLOW_PATH: .github/workflows/build-and-push.yml
+      METRICS_RUN_ID: ${{ github.run_id }}
+      METRICS_RUN_ATTEMPT: ${{ github.run_attempt }}
+      METRICS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      METRICS_RUNNER_IMAGES_SHA: ${{ inputs.runner_images_revision }}
+      METRICS_MESH_LLM_SHA: ${{ inputs.mesh_revision }}
+      METRICS_ENVIRONMENT: ${{ inputs.environment }}
+      METRICS_BACKEND_ID: ${{ inputs.backend_id }}
+      METRICS_PLATFORM: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix: >-
@@ -148,10 +163,27 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate catalog build selection
+        id: selection
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          BACKEND_ID: ${{ inputs.backend_id }}
+          BACKEND_NAME: ${{ inputs.backend_name }}
+          CUDA_SERIES: ${{ inputs.cuda_series }}
+          ROCM_VERSION: ${{ inputs.rocm_version }}
+          ARCHITECTURES: ${{ inputs.architectures }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          set -euo pipefail
+          scripts/validate-family-selection.sh "$ENVIRONMENT" "$BACKEND_ID" \
+            "$BACKEND_NAME" "$CUDA_SERIES" "$ROCM_VERSION" "$ARCHITECTURES" "$DOCKERFILE"
+          echo "verifier_revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Download manifest bundles
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: mesh-manifest-bundles
+          name: mesh-manifest-bundles-${{ github.run_attempt }}
           path: build-context/manifests
 
       - name: Set up Depot CLI
@@ -250,6 +282,7 @@ jobs:
         with:
           project: ${{ env.DEPOT_PROJECT_ID }}
           context: .
+          file: ${{ inputs.dockerfile }}
           target: ${{ inputs.execution_mode != 'validate' && inputs.environment || format('{0}-test', inputs.environment) }}
           platforms: ${{ matrix.platform }}
           outputs: ${{ inputs.execution_mode != 'validate' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || '' }}
@@ -264,10 +297,45 @@ jobs:
             RUNNER_ENVIRONMENT=${{ inputs.environment }}
             MESH_LLM_REVISION=${{ inputs.mesh_revision }}
             RUNNER_IMAGES_REVISION=${{ inputs.runner_images_revision }}
+            VERIFIER_REVISION=${{ steps.selection.outputs.verifier_revision }}
             CUDA_SERIES=${{ inputs.cuda_series }}
             ROCM_VERSION=${{ inputs.rocm_version }}
           provenance: ${{ inputs.execution_mode != 'validate' && 'mode=max' || 'false' }}
           sbom: ${{ inputs.execution_mode != 'validate' }}
+
+      - name: Stop Depot build timer
+        id: build_end
+        if: always()
+        shell: bash
+        env:
+          STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+        run: |
+          if [[ "$STARTED_AT" =~ ^[0-9]+$ ]]; then
+            echo "elapsed_seconds=$(( $(date +%s) - STARTED_AT ))" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Retain production invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        shell: bash
+        env:
+          METRICS_OUTCOME: ${{ steps.build.outcome }}
+          METRICS_BUILD_ID: ${{ steps.build.outputs.build-id }}
+          METRICS_PROJECT_ID: ${{ steps.build.outputs.project-id }}
+          METRICS_ELAPSED_SECONDS: ${{ steps.build_end.outputs.elapsed_seconds }}
+          METRICS_CONTEXT_BYTES: ${{ steps.context.outputs.content_bytes }}
+          METRICS_CONTEXT_FILES: ${{ steps.context.outputs.file_count }}
+        run: |
+          python3 scripts/runner-build-metrics.py --role production \
+            --output "$RUNNER_TEMP/runner-metrics-production"
+
+      - name: Upload production invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runner-metrics-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ github.run_attempt }}-production
+          path: ${{ runner.temp }}/runner-metrics-production
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Record Depot build metrics
         id: build_metrics
@@ -289,11 +357,11 @@ jobs:
           IS_PUBLIC_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
           RUNNER_ARCH: ${{ runner.arch }}
           RUNNER_OS: ${{ runner.os }}
-          STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+          ELAPSED_SECONDS: ${{ steps.build_end.outputs.elapsed_seconds }}
         run: |
           set -euo pipefail
-          if [[ "$STARTED_AT" =~ ^[0-9]+$ ]]; then
-            elapsed_seconds="$(( $(date +%s) - STARTED_AT ))"
+          if [[ "$ELAPSED_SECONDS" =~ ^[0-9]+$ ]]; then
+            elapsed_seconds="$ELAPSED_SECONDS"
           else
             elapsed_seconds=unavailable
           fi
@@ -384,7 +452,7 @@ jobs:
         if: always() && steps.build_metrics.outputs.metrics_file != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: depot-build-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}
+          name: depot-build-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ github.run_attempt }}
           path: ${{ steps.build_metrics.outputs.metrics_file }}
           if-no-files-found: error
           retention-days: 14
@@ -451,7 +519,7 @@ jobs:
             child_digest="$DIGEST"
           fi
           [[ "$child_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          output="/tmp/candidate-platform-${PLATFORM_ID}.json"
+          output="/tmp/candidate-platform-${ENVIRONMENT}-${BACKEND_ID}-${PLATFORM_ID}.json"
           jq -n \
             --arg image "$IMAGE" \
             --arg environment "$ENVIRONMENT" \
@@ -488,9 +556,12 @@ jobs:
 
       - name: Verify exact staged platform digest
         if: inputs.execution_mode != 'validate'
+        id: verify
         shell: bash
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+          CANDIDATE_DESCRIPTOR: ${{ steps.candidate.outputs.descriptor }}
+          VERIFIER_REVISION: ${{ steps.selection.outputs.verifier_revision }}
           PLATFORM: ${{ matrix.platform }}
           ENVIRONMENT: ${{ inputs.environment }}
           BACKEND_NAME: ${{ inputs.backend_name }}
@@ -500,29 +571,96 @@ jobs:
           RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
         run: |
           set -euo pipefail
-          depot build \
+          verifier_revision="$VERIFIER_REVISION"
+          identity_directory="$RUNNER_TEMP/runner-identity"
+          mkdir -p "$identity_directory"
+          python3 scripts/capture-build-invocation.py \
+            --log "$identity_directory/cache.log" \
+            --state "$identity_directory/invocation-state.json" \
+            -- depot build \
             --project "$DEPOT_PROJECT_ID" \
             --file Dockerfile.verify \
+            --target identity-output \
             --platform "$PLATFORM" \
             --build-arg "CANDIDATE_IMAGE=${IMAGE}@${DIGEST}" \
+            --build-arg "VERIFIER_REVISION=${verifier_revision}" \
             --build-arg "EXPECTED_ENVIRONMENT=${ENVIRONMENT}" \
             --build-arg "EXPECTED_BACKEND=${BACKEND_NAME}" \
             --build-arg "EXPECTED_MESH_REVISION=${MESH_REVISION}" \
             --build-arg "EXPECTED_RUNNER_IMAGES_REVISION=${RUNNER_IMAGES_REVISION}" \
             --build-arg "EXPECTED_CUDA_SERIES=${CUDA_SERIES}" \
             --build-arg "EXPECTED_ROCM_VERSION=${ROCM_VERSION}" \
-            --output type=cacheonly \
+            --metadata-file "$identity_directory/verification-build.json" \
+            --output "type=local,dest=$identity_directory/runtime" \
             --progress plain \
             .
+          # Preserve exact registry bytes for digest and descriptor-size checks.
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --raw \
+            > "$identity_directory/index.json"
+          child_digest="$(jq -er '.child_digest' "$CANDIDATE_DESCRIPTOR")"
+          docker buildx imagetools inspect "${IMAGE}@${child_digest}" --raw \
+            > "$identity_directory/manifest.json"
+          python3 scripts/bind-runner-identity.py \
+            --runtime "$identity_directory/runtime/runtime-identity.json" \
+            --candidate "$CANDIDATE_DESCRIPTOR" \
+            --index "$identity_directory/index.json" \
+            --manifest "$identity_directory/manifest.json" \
+            --expected-directory config \
+            --verifier-revision "$verifier_revision" \
+            --output "$identity_directory/identity.json"
+          echo "receipt=$identity_directory/identity.json" >> "$GITHUB_OUTPUT"
+          echo "evidence=$identity_directory" >> "$GITHUB_OUTPUT"
+
+      - name: Retain verification invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        shell: bash
+        env:
+          METRICS_OUTCOME: ${{ steps.verify.outcome }}
+          METRICS_VERIFIER_SHA: ${{ steps.selection.outputs.verifier_revision }}
+        run: |
+          cache_args=()
+          # Failed builds may not write metadata. Unbound logs are not cache proof.
+          if [[ -f "$RUNNER_TEMP/runner-identity/verification-build.json" ]] && \
+            jq -e '."depot.build" | (.buildID | type == "string" and length > 0) and (.projectID | type == "string" and length > 0)' \
+              "$RUNNER_TEMP/runner-identity/verification-build.json" >/dev/null; then
+            cache_args=(--cache-log "$RUNNER_TEMP/runner-identity/cache.log" --cache-format buildkit-plain-v1)
+          fi
+          python3 scripts/runner-build-metrics.py --role verification \
+            "${cache_args[@]}" \
+            --output "$RUNNER_TEMP/runner-metrics-verification" \
+            --metadata "$RUNNER_TEMP/runner-identity/verification-build.json" \
+            --state "$RUNNER_TEMP/runner-identity/invocation-state.json" \
+            --identity "$RUNNER_TEMP/runner-identity/identity.json"
+
+      - name: Upload verification invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runner-metrics-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ github.run_attempt }}-verification
+          path: ${{ runner.temp }}/runner-metrics-verification
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload verified runner identity
+        if: inputs.execution_mode != 'validate'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runner-identity-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.verify.outputs.receipt }}
+            ${{ steps.verify.outputs.evidence }}/index.json
+            ${{ steps.verify.outputs.evidence }}/manifest.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload verified platform candidate
         if: inputs.execution_mode != 'validate'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: candidate-platform-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}
+          name: candidate-platform-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ github.run_attempt }}
           path: ${{ steps.candidate.outputs.descriptor }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
   assemble_family_index:
     name: Assemble ${{ inputs.environment }} ${{ inputs.backend_id }} index
@@ -552,7 +690,7 @@ jobs:
       - name: Download verified platform candidates
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: candidate-platform-${{ inputs.environment }}-${{ inputs.backend_id }}-*
+          pattern: candidate-platform-${{ inputs.environment }}-${{ inputs.backend_id }}-*-${{ github.run_attempt }}
           path: /tmp/platform-candidates
           merge-multiple: true
 
@@ -580,166 +718,28 @@ jobs:
           RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
         run: |
           set -euo pipefail
-          mapfile -t descriptor_files < <(
-            find /tmp/platform-candidates -maxdepth 1 -type f -name 'candidate-platform-*.json' -print \
-              | sort
-          )
-          IFS=',' read -r -a expected_architectures <<< "$ARCHITECTURES"
-          [[ "${#descriptor_files[@]}" -eq "${#expected_architectures[@]}" ]]
-
-          expected_cuda_json="$(if [[ "$CUDA_SERIES" == none ]]; then echo null; else jq -Rn --arg value "$CUDA_SERIES" '$value'; fi)"
-          expected_rocm_json="$(if [[ "$ROCM_VERSION" == none ]]; then echo null; else jq -Rn --arg value "$ROCM_VERSION" '$value'; fi)"
-          for descriptor_file in "${descriptor_files[@]}"; do
-            jq -e \
-              --arg image "$IMAGE" \
-              --arg environment "$ENVIRONMENT" \
-              --arg backend_id "$BACKEND_ID" \
-              --arg backend_name "$BACKEND_NAME" \
-              --argjson cuda_series "$expected_cuda_json" \
-              --argjson rocm_version "$expected_rocm_json" \
-              --arg mesh_revision "$MESH_REVISION" \
-              --arg runner_images_revision "$RUNNER_IMAGES_REVISION" \
-              '
-                def exact_keys($expected): (keys | sort) == ($expected | sort);
-                def digest: type == "string" and test("^sha256:[0-9a-f]{64}$");
-                type == "object"
-                and exact_keys([
-                  "backend",
-                  "child_digest",
-                  "digest",
-                  "environment",
-                  "image",
-                  "mesh_revision",
-                  "platform",
-                  "runner_images_revision",
-                  "schema",
-                  "type"
-                ])
-                and .schema == 1
-                and .type == "mesh-llm-runner-image-platform-candidate"
-                and .image == $image
-                and .environment == $environment
-                and .backend == {
-                  id: $backend_id,
-                  name: $backend_name,
-                  cuda_series: $cuda_series,
-                  rocm_version: $rocm_version
-                }
-                and .mesh_revision == $mesh_revision
-                and .runner_images_revision == $runner_images_revision
-                and (.platform | exact_keys(["architecture", "os"]))
-                and .platform.os == "linux"
-                and (.platform.architecture == "amd64" or .platform.architecture == "arm64")
-                and (.digest | digest)
-                and (.child_digest | digest)
-              ' "$descriptor_file" >/dev/null
-          done
-
-          actual_architectures="$(
-            jq -sc '[.[].platform.architecture] | sort' "${descriptor_files[@]}"
-          )"
-          expected_architectures_json="$(
-            printf '%s\n' "${expected_architectures[@]}" | jq -R . | jq -sc 'sort'
-          )"
-          [[ "$actual_architectures" == "$expected_architectures_json" ]]
-          [[ "$(jq -sc '[.[].platform.architecture] | unique | length' "${descriptor_files[@]}")" -eq "${#descriptor_files[@]}" ]]
-          [[ "$(jq -sc '[.[].digest] | unique | length' "${descriptor_files[@]}")" -eq "${#descriptor_files[@]}" ]]
-
-          mapfile -t sources < <(
-            jq -r --arg image "$IMAGE" '"\($image)@\(.digest)"' "${descriptor_files[@]}"
-          )
-          expected_children="$(
-            jq -sc \
-              '[.[] | {
-                architecture: .platform.architecture,
-                digest: .child_digest,
-                os: .platform.os
-              }] | sort_by(.architecture)' \
-              "${descriptor_files[@]}"
-          )"
-          candidate_tag="${IMAGE}:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ENVIRONMENT}-${BACKEND_ID}"
-          docker buildx imagetools create --tag "$candidate_tag" "${sources[@]}"
-          manifest_json="$(docker buildx imagetools inspect "$candidate_tag" --format '{{json .Manifest}}')"
-          digest="$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest_json")"
-          source_reference="${IMAGE}@${digest}"
-          raw_manifest="$(docker buildx imagetools inspect "$source_reference" --raw)"
-          actual_children="$(
-            jq -ce \
-              '
-                if (
-                  .schemaVersion == 2
-                  and (.manifests | type == "array")
-                  and all(
-                    .manifests[];
-                    .platform.os == "linux"
-                    or (
-                      .platform.os == "unknown"
-                      and .platform.architecture == "unknown"
-                      and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
-                    )
-                  )
-                ) then
-                  [
-                    .manifests[]
-                    | select(.platform.os == "linux")
-                    | {
-                        architecture: .platform.architecture,
-                        digest: .digest,
-                        os: .platform.os
-                      }
-                  ] | sort_by(.architecture)
-                else
-                  error("invalid candidate index")
-                end
-              ' <<< "$raw_manifest"
-          )"
-          [[ "$actual_children" == "$expected_children" ]]
-
           descriptor="/tmp/candidate-index-${ENVIRONMENT}-${BACKEND_ID}.json"
-          jq -n \
-            --arg image "$IMAGE" \
-            --arg environment "$ENVIRONMENT" \
-            --arg backend_id "$BACKEND_ID" \
-            --arg backend_name "$BACKEND_NAME" \
-            --arg cuda_series "$CUDA_SERIES" \
-            --arg rocm_version "$ROCM_VERSION" \
-            --arg runner_images_revision "$RUNNER_IMAGES_REVISION" \
-            --arg mesh_revision "$MESH_REVISION" \
-            --arg digest "$digest" \
-            --argjson children "$actual_children" \
-            '{
-              schema: 1,
-              type: "mesh-llm-runner-image-candidate",
-              image: $image,
-              environment: $environment,
-              backend: {
-                id: $backend_id,
-                name: $backend_name,
-                cuda_series: (if $cuda_series == "none" then null else $cuda_series end),
-                rocm_version: (if $rocm_version == "none" then null else $rocm_version end)
-              },
-              runner_images_revision: $runner_images_revision,
-              mesh_revision: $mesh_revision,
-              digest: $digest,
-              children: $children
-            }' > "$descriptor"
-          scripts/validate-candidate-descriptor.sh \
-            --descriptor "$descriptor" \
-            --image "$IMAGE" \
-            --environment "$ENVIRONMENT" \
-            --backend-id "$BACKEND_ID" \
-            --backend-name "$BACKEND_NAME" \
-            --cuda-series "$CUDA_SERIES" \
-            --rocm-version "$ROCM_VERSION" \
-            --mesh-revision "$MESH_REVISION" \
-            --runner-images-revision "$RUNNER_IMAGES_REVISION" \
-            --architectures "$ARCHITECTURES"
+          python3 scripts/assemble-runner-index.py \
+            --platforms /tmp/platform-candidates \
+            --environment "$ENVIRONMENT" --backend-id "$BACKEND_ID" \
+            --mesh-revision "$MESH_REVISION" --runner-images-revision "$RUNNER_IMAGES_REVISION" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$descriptor"
           echo "descriptor=$descriptor" >> "$GITHUB_OUTPUT"
+          echo "digest=$(jq -er '.digest' "$descriptor")" >> "$GITHUB_OUTPUT"
+
+      - name: Attest verified family candidate digest
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.candidate.outputs.digest }}
+          push-to-registry: true
 
       - name: Upload verified family candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: candidate-index-${{ inputs.environment }}-${{ inputs.backend_id }}
+          name: candidate-index-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ github.run_attempt }}
           path: ${{ steps.candidate.outputs.descriptor }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14

@@ -1,0 +1,150 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BACKEND=ui
+ARG ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+
+# Independent of the full image's compiler and Python AI dependency stages.
+# The pinned Actions base retains its Docker CLI, runner and Node externals.
+FROM ${ACTIONS_RUNNER_BASE_IMAGE} AS ui-tools
+ARG TARGETARCH
+ARG RUNNER_ENVIRONMENT=public
+USER root
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PNPM_HOME=/home/runner/.local/share/pnpm \
+    ONNXRUNTIME_NODE_INSTALL=skip \
+    PATH=/home/runner/externals/node24/bin:/home/runner/.local/share/pnpm:${PATH}
+LABEL org.opencontainers.image.source="https://github.com/Mesh-LLM/mesh-llm-runner-images" \
+      org.opencontainers.image.description="MeshLLM console UI and browser CI environment" \
+      org.opencontainers.image.licenses="MIT" \
+      io.mesh-llm.runner.gha-convention="true"
+
+COPY profiles/ui.yml profiles/public.yml /tmp/profiles/
+COPY scripts/profile-packages.sh /usr/local/bin/profile-packages
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-ui-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-ui-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    [[ "${TARGETARCH}" == amd64 && "${RUNNER_ENVIRONMENT}" == public ]] \
+    && chmod 0755 /usr/local/bin/profile-packages \
+    && rm -f /etc/apt/apt.conf.d/docker-clean \
+    && profile-packages /tmp/profiles/ui.yml /tmp/profiles/public.yml > /tmp/profiles/packages.txt \
+    && mapfile -t packages < /tmp/profiles/packages.txt \
+    && test "${#packages[@]}" -gt 0 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends "${packages[@]}" \
+    && rm -rf /tmp/profiles
+
+# Installer version changes must not invalidate the operating-system packages.
+ARG NODE_MAJOR=24
+ARG PNPM_VERSION=10.34.5
+ARG JUST_VERSION=1.57.0
+COPY scripts/install-tools-common.sh /usr/local/bin/install-tools-common.sh
+COPY scripts/install-ui-tools.sh /usr/local/bin/install-ui-tools
+RUN --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-ui-${TARGETARCH},target=/root/.npm,sharing=locked \
+    --mount=type=cache,id=mesh-runner-tool-downloads-ubuntu24-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
+    chmod 0755 /usr/local/bin/install-ui-tools \
+    && TARGETARCH="${TARGETARCH}" NODE_MAJOR="${NODE_MAJOR}" \
+       PNPM_VERSION="${PNPM_VERSION}" JUST_VERSION="${JUST_VERSION}" /usr/local/bin/install-ui-tools \
+    && printf '%s\n' "${NODE_MAJOR}" > /etc/mesh-runner-node-major \
+    && pnpm --version > /etc/mesh-runner-pnpm-version \
+    && git lfs install --system \
+    && mkdir -p /opt/mesh-llm/manifests /home/runner/.npm /home/runner/.local/share/pnpm/store \
+    && chown -R runner:docker /opt/mesh-llm /home/runner/.npm /home/runner/.local/share/pnpm
+WORKDIR /workspace
+USER runner
+
+# Filtering is a cheap independent stage. Only the resulting UI/config bytes
+# feed the warm layer, so unrelated Cargo/Python/website changes do not reach it.
+FROM ui-tools AS ui-inputs
+USER root
+COPY build-context/manifests/public/dependencies/ /tmp/manifest-inputs/
+COPY scripts/prepare-ui-dependencies.sh /usr/local/bin/prepare-ui-dependencies
+RUN chmod 0755 /usr/local/bin/prepare-ui-dependencies \
+    && prepare-ui-dependencies /tmp/manifest-inputs /ui-manifests
+
+FROM ui-tools AS ui-dependencies
+USER root
+ENV NPM_CONFIG_CACHE=/home/runner/.npm \
+    npm_config_store_dir=/home/runner/.local/share/pnpm/store
+COPY --link --chown=1001:123 --from=ui-inputs /ui-manifests/ /opt/mesh-llm/manifests/
+COPY scripts/warm-ui-dependencies.sh /usr/local/bin/warm-ui-dependencies
+# This store has no shared cache mount and never imports the full image store:
+# cached lifecycle output from that store may contain ONNX CUDA libraries.
+RUN chmod 0755 /usr/local/bin/warm-ui-dependencies \
+    && warm-ui-dependencies /opt/mesh-llm/manifests
+
+FROM ui-tools AS backend-ui
+
+FROM ui-tools AS backend-browser
+USER root
+ARG TARGETARCH
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    NODE_PATH=/home/runner/externals/node24/lib/node_modules
+COPY config/playwright-pin.txt /tmp/playwright-pin.txt
+COPY scripts/install-playwright.sh /usr/local/bin/install-playwright
+RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-browser-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-browser-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=mesh-runner-npm-node${NODE_MAJOR}-ubuntu24-browser-${TARGETARCH},target=/root/.npm,sharing=locked \
+    chmod 0755 /usr/local/bin/install-playwright \
+    && install-playwright /tmp/playwright-pin.txt \
+    && rm -f /tmp/playwright-pin.txt
+USER runner
+
+FROM backend-${BACKEND} AS public
+USER root
+ARG BACKEND
+ARG RUNNER_ENVIRONMENT=public
+ARG CUDA_SERIES=none
+ARG ROCM_VERSION=none
+ENV NPM_CONFIG_CACHE=/home/runner/.npm \
+    npm_config_store_dir=/home/runner/.local/share/pnpm/store \
+    MESH_RUNNER_ENVIRONMENT=public \
+    MESH_RUNNER_BACKEND=${BACKEND}
+COPY --link --chown=1001:123 --from=ui-dependencies /opt/mesh-llm/manifests/ /opt/mesh-llm/manifests/
+COPY --link --chown=1001:123 --from=ui-dependencies /home/runner/.npm/ /home/runner/.npm/
+COPY --link --chown=1001:123 --from=ui-dependencies /home/runner/.local/share/pnpm/store/ /home/runner/.local/share/pnpm/store/
+RUN [[ "${RUNNER_ENVIRONMENT}" == public && "${CUDA_SERIES}" == none && "${ROCM_VERSION}" == none ]] \
+    && [[ "${BACKEND}" == ui || "${BACKEND}" == browser ]] \
+    && printf '%s\n' public > /etc/mesh-runner-environment \
+    && printf '%s\n' "${BACKEND}" > /etc/mesh-runner-backend \
+    && printf '%s\n' none > /etc/mesh-runner-cuda-series \
+    && printf '%s\n' none > /etc/mesh-runner-rocm-version \
+    && mkdir -p /__e /__w /github/home /github/workflow \
+    && ln -s /home/runner/externals/node24 /__e/node24 \
+    && ln -s /home/runner/externals/node20 /__e/node20 \
+    && chmod 0777 /__w /github/home /github/workflow
+
+# Source identity does not invalidate package fetching or browser installation.
+COPY build-context/manifests/public/manifest-index.json \
+     build-context/manifests/public/source-revision.txt \
+     build-context/manifests/public/profile.txt /opt/mesh-llm/manifests/
+ARG MESH_LLM_REVISION=unknown
+ARG RUNNER_IMAGES_REVISION=unknown
+LABEL io.mesh-llm.runner.environment="public" \
+      io.mesh-llm.runner.backend="${BACKEND}" \
+      io.mesh-llm.source.revision="${MESH_LLM_REVISION}" \
+      io.mesh-llm.runner-images.revision="${RUNNER_IMAGES_REVISION}"
+RUN printf '%s\n' "${MESH_LLM_REVISION}" > /etc/mesh-llm-revision \
+    && printf '%s\n' "${RUNNER_IMAGES_REVISION}" > /etc/mesh-runner-images-revision
+COPY scripts/verify-runner-image.sh /usr/local/bin/verify-runner-image
+RUN chmod 0755 /usr/local/bin/verify-runner-image
+ENTRYPOINT []
+CMD ["/bin/bash"]
+
+FROM public AS public-test
+ARG BACKEND
+ARG MESH_LLM_REVISION
+ARG RUNNER_IMAGES_REVISION
+ARG VERIFIER_REVISION
+COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
+RUN --network=none expected_playwright=none \
+    && if [[ "${BACKEND}" == browser ]]; then expected_playwright="$(cat /opt/mesh-runner-verification/playwright-pin.txt)"; fi \
+    && bash /opt/mesh-runner-verification/verify-runner-candidate.sh \
+       --expected-directory /opt/mesh-runner-verification \
+       --verifier-revision "${VERIFIER_REVISION}" \
+       public "${BACKEND}" "${MESH_LLM_REVISION}" none none \
+       "${RUNNER_IMAGES_REVISION}" "$expected_playwright" > /tmp/mesh-runner-identity.json \
+    && cat /tmp/mesh-runner-identity.json

@@ -12,7 +12,12 @@ repository_root="${1:-.}"
 # Depot; those phases are not exposed separately by the build action.
 context_files=(
   "$repository_root/Dockerfile"
+  "$repository_root/Dockerfile.ui"
   "$repository_root/Dockerfile.verify"
+  "$repository_root/config/playwright-pin.txt"
+  "$repository_root/config/python-requirements.lock"
+  "$repository_root/config/tool-pins.json"
+  "$repository_root/config/cache-policy.json"
 )
 context_listing="$(mktemp)"
 trap 'rm -f "$context_listing"' EXIT

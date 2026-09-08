@@ -1,0 +1,21 @@
+---
+schema: 1
+profile: ui
+apt:
+  packages:
+    - bash
+    - ca-certificates
+    - curl
+    - file
+    - git
+    - git-lfs
+    - gzip
+    - jq
+    - python-is-python3
+    - python3
+    - rsync
+    - tar
+    - unzip
+    - xz-utils
+    - zip
+    - zstd

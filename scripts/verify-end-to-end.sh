@@ -5,16 +5,46 @@ image="${IMAGE:-ghcr.io/mesh-llm/mesh-llm-cuda-runner}"
 public_tag="${PUBLIC_TAG:-public-latest}"
 self_hosted_tag="${SELF_HOSTED_TAG:-self-hosted-latest}"
 all_backends=false
+expected_mesh_revision=
+expected_runner_images_revision=
+resolved_aliases='{}'
+resolved_reference=
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for argument in "$@"; do
-  case "$argument" in
-    --all-backends) all_backends=true ;;
-    *) echo "unknown argument: $argument" >&2; exit 2 ;;
+while (( $# > 0 )); do
+  case "$1" in
+    --all-backends) all_backends=true; shift ;;
+    --mesh-revision|--runner-images-revision)
+      [[ "${2:-}" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "$1 requires a full lowercase git SHA" >&2
+        exit 2
+      }
+      if [[ "$1" == --mesh-revision ]]; then expected_mesh_revision="$2"
+      else expected_runner_images_revision="$2"; fi
+      shift 2
+      ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 require_command() {
   command -v "$1" >/dev/null || { echo "missing required command: $1" >&2; exit 1; }
+}
+
+resolve_alias() {
+  local alias_reference="$1" digest manifest
+  digest="$(jq -r --arg reference "$alias_reference" '.[$reference] // empty' <<< "$resolved_aliases")"
+  if [[ -z "$digest" ]]; then
+    manifest="$(docker buildx imagetools inspect "$alias_reference" --format '{{json .Manifest}}')"
+    digest="$(jq -er '.digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest")"
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+      echo "registry returned no single valid digest for $alias_reference" >&2
+      exit 1
+    }
+    resolved_aliases="$(jq --arg reference "$alias_reference" --arg digest "$digest" \
+      '.[$reference] = $digest' <<< "$resolved_aliases")"
+  fi
+  resolved_reference="$image@$digest"
 }
 
 verify_manifest_list() {
@@ -33,10 +63,15 @@ verify_local_execution() {
   local reference="$1"
   local environment="$2"
   local backend="$3"
-  shift 3
+  local cuda_series="$4"
+  local rocm_version="$5"
+  local playwright_version="$6"
+  shift 6
   for architecture in "$@"; do
-    docker run --rm --platform "linux/$architecture" --entrypoint /usr/local/bin/verify-runner-image \
-      "$reference" "$environment" "$backend"
+    # The daemon may pull this exact digest; the verification process is offline.
+    docker run --rm --pull=missing --network none --platform "linux/$architecture" --entrypoint /usr/local/bin/verify-runner-image \
+      "$reference" "$environment" "$backend" "$expected_mesh_revision" "$cuda_series" "$rocm_version" \
+      "$expected_runner_images_revision" "$playwright_version"
   done
 }
 
@@ -44,29 +79,59 @@ verify_image() {
   local tag="$1"
   local environment="$2"
   local backend="$3"
-  shift 3
-  local reference="$image:$tag"
+  local cuda_series="$4"
+  local rocm_version="$5"
+  local playwright_version="$6"
+  shift 6
+  resolve_alias "$image:$tag"
+  local reference="$resolved_reference"
   verify_manifest_list "$reference" "$@"
-  verify_local_execution "$reference" "$environment" "$backend" "$@"
+  verify_local_execution "$reference" "$environment" "$backend" "$cuda_series" "$rocm_version" "$playwright_version" "$@"
 }
 
 require_command docker
 require_command jq
 
-verify_image "$public_tag" public cpu amd64 arm64
-verify_manifest_list "$image:$self_hosted_tag" amd64 arm64
-verify_local_execution "$image:$self_hosted_tag" self-hosted cuda amd64
-verify_local_execution "$image:$self_hosted_tag" self-hosted cpu arm64
+# Finish catalog generation before any registry access. A failed producer in
+# process substitution would otherwise be invisible to the verification loop.
+matrices="$(bash "$repository_root/scripts/generate-workflow-matrices.sh")"
+family_rows="$(jq -er '.family_matrix.include[] |
+  [.environment, .backend_id, .backend_name, .cuda_series, .rocm_version, .architectures] | @tsv' <<< "$matrices")"
+mixed_rows="$(jq -er --slurpfile catalog "$repository_root/config/runner-image-families.json" '
+  .family_matrix.include as $families
+  | [$catalog[0].indexes[] | select(.artifact == "candidate-index-self-hosted-compatibility")]
+  | if length == 1 then .[0] else error("expected exactly one compatibility index") end
+  | .sources[] as $source
+  | $families[] | select(.environment == $source.environment and .backend_id == $source.backend_id)
+  | [.environment, .backend_name, .cuda_series, .rocm_version, $source.architecture] | @tsv' <<< "$matrices")"
+mixed_architectures=()
+while IFS=$'\t' read -r environment backend cuda_series rocm_version architecture; do
+  mixed_architectures+=("$architecture")
+done <<< "$mixed_rows"
+playwright_version="$(cat "$repository_root/config/playwright-pin.txt")"
+[[ "$playwright_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "invalid Playwright version pin" >&2
+  exit 1
+}
+
+verify_image "$public_tag" public cpu none none none amd64 arm64
+resolve_alias "$image:$self_hosted_tag"
+self_hosted_reference="$resolved_reference"
+verify_manifest_list "$self_hosted_reference" "${mixed_architectures[@]}"
+while IFS=$'\t' read -r environment backend cuda_series rocm_version architecture; do
+  expected_playwright=none
+  if [[ "$backend" == web || "$backend" == browser ]]; then expected_playwright="$playwright_version"; fi
+  verify_local_execution "$self_hosted_reference" "$environment" "$backend" "$cuda_series" "$rocm_version" "$expected_playwright" "$architecture"
+done <<< "$mixed_rows"
 
 if [[ "$all_backends" == true ]]; then
-  for environment in public self-hosted; do
-    verify_image "$environment-cpu-latest" "$environment" cpu amd64 arm64
-    verify_image "$environment-vulkan-latest" "$environment" vulkan amd64 arm64
-    verify_image "$environment-cuda12-latest" "$environment" cuda amd64 arm64
-    verify_image "$environment-cuda13-latest" "$environment" cuda amd64 arm64
-    verify_image "$environment-rocm70-latest" "$environment" rocm amd64
-    verify_image "$environment-rocm72-latest" "$environment" rocm amd64
-  done
+  while IFS=$'\t' read -r environment backend_id backend cuda_series rocm_version architecture_list; do
+    IFS=, read -r -a architectures <<< "$architecture_list"
+    expected_playwright=none
+    if [[ "$backend" == web || "$backend" == browser ]]; then expected_playwright="$playwright_version"; fi
+    verify_image "$environment-$backend_id-latest" "$environment" "$backend" \
+      "$cuda_series" "$rocm_version" "$expected_playwright" "${architectures[@]}"
+  done <<< "$family_rows"
 fi
 
 echo "runner image verification passed"

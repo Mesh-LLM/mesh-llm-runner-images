@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG CANDIDATE_IMAGE
-FROM ${CANDIDATE_IMAGE}
+FROM ${CANDIDATE_IMAGE} AS verified
 
 ARG CANDIDATE_IMAGE
 ARG EXPECTED_ENVIRONMENT
@@ -10,36 +10,37 @@ ARG EXPECTED_MESH_REVISION
 ARG EXPECTED_RUNNER_IMAGES_REVISION
 ARG EXPECTED_CUDA_SERIES=none
 ARG EXPECTED_ROCM_VERSION=none
+ARG VERIFIER_REVISION
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# The web backend's expected Playwright version is not a caller-supplied
-# build-arg: no caller has ever set one (stage-image-family.yml's
-# EXPECTED_* build-args stop at EXPECTED_ROCM_VERSION), so this ARG's
-# "none" default silently applied to every backend, including web, and
-# always compared equal to itself -- the verify step never actually
-# asserted the baked Chromium against the repo's own pin. Per
-# docs/OPERATIONS.md, the image declares the pin; read it directly from
-# the same checked-in file the backend-web Dockerfile stage bakes from,
-# scoped to the web backend the same way EXPECTED_CUDA_SERIES/
-# EXPECTED_ROCM_VERSION are scoped to their backends.
-COPY config/playwright-pin.txt /tmp/playwright-pin.txt
+# Browser-capable images must match the pin from this verification checkout.
+# Read it independently of the candidate stamp so an omitted caller argument
+# cannot turn version verification into a comparison against its own default.
+# Verification inputs are separate from the candidate's own stamps and locks.
+COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
 
-RUN [[ "${CANDIDATE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]] \
+RUN --network=none [[ "${CANDIDATE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]] \
     && test -n "${EXPECTED_ENVIRONMENT}" \
     && test -n "${EXPECTED_BACKEND}" \
     && test -n "${EXPECTED_MESH_REVISION}" \
     && test -n "${EXPECTED_RUNNER_IMAGES_REVISION}" \
-    && if [[ "${EXPECTED_BACKEND}" == web ]]; then \
-         expected_playwright_version="$(cat /tmp/playwright-pin.txt)"; \
+    && if [[ "${EXPECTED_BACKEND}" == web || "${EXPECTED_BACKEND}" == browser ]]; then \
+         expected_playwright_version="$(cat /opt/mesh-runner-verification/playwright-pin.txt)"; \
        else \
          expected_playwright_version=none; \
        fi \
-    && /usr/local/bin/verify-runner-image \
+    && bash /opt/mesh-runner-verification/verify-runner-candidate.sh \
+       --expected-directory /opt/mesh-runner-verification \
+       --verifier-revision "${VERIFIER_REVISION}" \
        "${EXPECTED_ENVIRONMENT}" \
        "${EXPECTED_BACKEND}" \
        "${EXPECTED_MESH_REVISION}" \
        "${EXPECTED_CUDA_SERIES}" \
        "${EXPECTED_ROCM_VERSION}" \
        "${EXPECTED_RUNNER_IMAGES_REVISION}" \
-       "${expected_playwright_version}"
+       "${expected_playwright_version}" > /tmp/mesh-runner-identity.json
+
+FROM scratch AS identity-output
+COPY --from=verified /tmp/mesh-runner-identity.json /runtime-identity.json

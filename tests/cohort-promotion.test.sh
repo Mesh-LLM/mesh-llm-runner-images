@@ -40,6 +40,20 @@ expect_failure() {
 }
 
 generation_log="$temporary_directory/generate.log"
+# The final compatibility tag is optional; every earlier TSV field is required.
+for field in environment backend_id backend_name cuda_series rocm_version architectures artifact tag_stem; do
+  jq --arg field "$field" '.include[0][$field] = ""' "$temporary_directory/matrix.json" > "$temporary_directory/empty.json"
+  if MOCK_DOCKER_LOG="$temporary_directory/empty.log" DOCKER_BIN="$mock_docker" \
+    bash "$generator" --descriptors "$descriptor_directory" --matrix "$temporary_directory/empty.json" \
+      --image "$image" --timestamp "$timestamp" --mesh-revision "$mesh_revision" \
+      --runner-images-revision "$runner_images_revision" --output "$temporary_directory/empty-cohort.json" \
+      > "$temporary_directory/empty-error.log" 2>&1; then
+    echo "empty required matrix field passed: $field" >&2
+    exit 1
+  fi
+  grep -Fq 'invalid promotion matrix' "$temporary_directory/empty-error.log"
+  test ! -s "$temporary_directory/empty.log"
+done
 MOCK_DOCKER_LOG="$generation_log" \
 MOCK_DOCKER_SOURCE_DIGEST="$digest" \
 DOCKER_BIN="$mock_docker" \
@@ -100,4 +114,101 @@ expect_failure env \
   DOCKER_BIN="$mock_docker" \
   bash "$reconciler" "$duplicate_manifest" target
 
+previous_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+mixed_manifest="$temporary_directory/mixed-previous.json"
+jq --arg image "$image" --arg previous_digest "$previous_digest" '
+  .entries[0].previous_digest = $previous_digest
+  | .entries += [{
+      artifact: "candidate-index-public-web",
+      tag: ($image + ":public-web-latest"),
+      target_digest: .entries[0].target_digest,
+      previous_digest: null
+    }]
+' "$temporary_directory/cohort.json" > "$mixed_manifest"
+
+# A newly introduced tag must not prevent the existing tags from rolling
+# back, regardless of whether the absent entry comes first or last.
+for absent_first in false true; do
+  rollback_manifest="$temporary_directory/rollback-$absent_first.json"
+  rollback_log="$temporary_directory/rollback-$absent_first.log"
+  rollback_error="$temporary_directory/rollback-$absent_first.err"
+  jq --argjson absent_first "$absent_first" '
+    if $absent_first then .entries |= reverse else . end
+  ' "$mixed_manifest" > "$rollback_manifest"
+  if MOCK_DOCKER_LOG="$rollback_log" \
+    MOCK_DOCKER_SOURCE_DIGEST="$previous_digest" \
+    DOCKER_BIN="$mock_docker" \
+    bash "$reconciler" "$rollback_manifest" previous 2>"$rollback_error"; then
+    :
+  else
+    status=$?
+    echo "mixed rollback failed with absent_first=$absent_first: exit $status" >&2
+    cat "$rollback_error" >&2
+    exit "$status"
+  fi
+  [[ "$(grep -c '^buildx imagetools create ' "$rollback_log")" -eq 1 ]]
+  grep -Fq \
+    "buildx imagetools create --tag $image:public-cuda12-latest $image@$previous_digest" \
+    "$rollback_log"
+  grep -Fq "rollback leaves previously absent tag unchanged: $image:public-web-latest" \
+    "$rollback_error"
+done
+
+all_absent_manifest="$temporary_directory/all-absent.json"
+all_absent_log="$temporary_directory/all-absent.log"
+jq '.entries[].previous_digest = null' "$mixed_manifest" > "$all_absent_manifest"
+MOCK_DOCKER_LOG="$all_absent_log" \
+MOCK_DOCKER_SOURCE_DIGEST="$digest" \
+DOCKER_BIN="$mock_docker" \
+  bash "$reconciler" "$all_absent_manifest" previous
+[[ ! -s "$all_absent_log" ]]
+
+# Nullable previous digests do not permit malformed values or missing fields.
+for mutation in '.entries[0].previous_digest = "invalid"' \
+  '.entries[0].previous_digest = false' 'del(.entries[0].previous_digest)'; do
+  invalid_previous_manifest="$temporary_directory/invalid-previous.json"
+  invalid_previous_log="$temporary_directory/invalid-previous.log"
+  jq "$mutation" "$mixed_manifest" > "$invalid_previous_manifest"
+  expect_failure env \
+    MOCK_DOCKER_LOG="$invalid_previous_log" \
+    MOCK_DOCKER_SOURCE_DIGEST="$digest" \
+    DOCKER_BIN="$mock_docker" \
+    bash "$reconciler" "$invalid_previous_manifest" previous
+  [[ ! -s "$invalid_previous_log" ]]
+done
+
+# If a later source fails preflight, no earlier tag may have been restored.
+preflight_manifest="$temporary_directory/preflight.json"
+preflight_log="$temporary_directory/preflight.log"
+jq --arg digest "$digest" --arg previous_digest "$previous_digest" '
+  .entries[0].previous_digest = $digest
+  | .entries[1].previous_digest = $previous_digest
+' "$mixed_manifest" > "$preflight_manifest"
+expect_failure env \
+  MOCK_DOCKER_LOG="$preflight_log" \
+  MOCK_DOCKER_SOURCE_DIGEST="$digest" \
+  DOCKER_BIN="$mock_docker" \
+  bash "$reconciler" "$preflight_manifest" previous
+[[ "$(grep -c '^buildx imagetools inspect ' "$preflight_log")" -eq 2 ]]
+if grep -q '^buildx imagetools create ' "$preflight_log"; then
+  echo "rollback changed a tag before every source passed preflight" >&2
+  exit 1
+fi
+
 echo "latest cohort reconciliation contract passed"
+
+# A jq or tag-generator failure must not silently truncate the cohort.
+jq '.include += [1]' "$temporary_directory/matrix.json" > "$temporary_directory/malformed-matrix.json"
+jq '.include[0].tag_stem = "invalid:stem"' "$temporary_directory/matrix.json" > "$temporary_directory/invalid-tag-matrix.json"
+for invalid_matrix in malformed invalid-tag; do
+  expect_failure env \
+    MOCK_DOCKER_LOG="$temporary_directory/$invalid_matrix.log" \
+    MOCK_DOCKER_SOURCE_DIGEST="$digest" DOCKER_BIN="$mock_docker" \
+    bash "$generator" \
+      --descriptors "$descriptor_directory" \
+      --matrix "$temporary_directory/$invalid_matrix-matrix.json" \
+      --image "$image" --timestamp "$timestamp" \
+      --mesh-revision "$mesh_revision" --runner-images-revision "$runner_images_revision" \
+      --output "$temporary_directory/$invalid_matrix-output.json"
+  [[ ! -e "$temporary_directory/$invalid_matrix-output.json" ]]
+done

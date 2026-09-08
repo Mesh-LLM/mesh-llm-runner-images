@@ -1,0 +1,63 @@
+name: Publish retained runner image cohort
+
+on:
+  workflow_call:
+    inputs:
+      artifact_id:
+        type: string
+        required: true
+      orchestration_runner:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'Mesh-LLM/mesh-llm-runner-images'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'Mesh-LLM/mesh-llm-runner-images/.github/workflows/build-and-push.yml@refs/heads/main'
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ${{ inputs.orchestration_runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout current trusted publication helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Download admitted cohort by immutable artifact ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ inputs.artifact_id }}
+          merge-multiple: true
+          path: /tmp/cohort
+      - name: Validate retained cohort against current policy
+        run: python3 scripts/runner-cohort.py validate --cohort /tmp/cohort/staged-cohort.json
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - name: Log in to GHCR for cohort publication
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish versioned tags and capture previous latest cohort
+        run: |
+          scripts/publish-runner-cohort.sh \
+            /tmp/cohort/staged-cohort.json /tmp/publication
+      # Persist the rollback snapshot before any mutable latest write.
+      - name: Retain latest reconciliation and origin manifests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: latest-cohort-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/publication/latest-cohort.json
+            /tmp/publication/origin.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Reconcile the complete latest cohort
+        run: scripts/reconcile-image-cohort.sh /tmp/publication/latest-cohort.json target
