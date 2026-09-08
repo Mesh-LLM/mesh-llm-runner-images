@@ -8,7 +8,7 @@ mkdir -p "$temporary_directory/bin" "$temporary_directory/cache"
 cp "$repository_root/scripts/install-tools-common.sh" "$temporary_directory/install-tools-common.sh"
 
 # Load installer functions without the real installation entrypoint.
-awk '/^cd \/tmp$/ { exit } { print }' "$repository_root/scripts/install-core-tools.sh" \
+awk '/^cd \/tmp$/ { found=1; exit } { print } END { if (!found) exit 1 }' "$repository_root/scripts/install-core-tools.sh" \
   > "$temporary_directory/functions.sh"
 cat > "$temporary_directory/fixture.sh" <<'EOF'
 #!/usr/bin/env bash

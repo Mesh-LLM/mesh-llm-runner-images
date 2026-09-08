@@ -1,5 +1,10 @@
 # PR 23 review follow-up
 
+- [x] Address the four additional test-maintenance comments in the review body.
+  QA: checksum fallback, installer extraction guard, policy-derived identity
+  fixtures, and explicit metrics-fixture imports pass their focused host suites
+  and shell checks; installer-boundary drift fails before sourcing any code.
+
 - [x] Reject empty required promotion fields while preserving the optional
   trailing compatibility tag. QA: every required empty field fails before
   registry access; the existing empty compatibility-tag case still passes.

@@ -1,16 +1,25 @@
 """Host-only receipt and invocation capture tests using independently bound OCI fixtures."""
 
+import copy
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import time
+import unittest
 
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("identity_fixtures", Path(__file__).with_name("runner_identity.py"))
 fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)
-globals().update({name: value for name, value in vars(fixtures).items() if not name.startswith("_")})
+repository = fixtures.repository
+RUNNER = fixtures.RUNNER
+SOURCE = fixtures.SOURCE
+VERIFIER = fixtures.VERIFIER
+IdentityFixtures = fixtures.IdentityFixtures
+raw = fixtures.raw
 spec = importlib.util.spec_from_file_location("metrics", repository / "scripts/runner-build-metrics.py")
 metrics = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(metrics)

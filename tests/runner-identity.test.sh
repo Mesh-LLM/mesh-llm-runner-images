@@ -18,6 +18,7 @@ repository = Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("identity", repository / "scripts/collect-runner-identity.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+PINS, _ = module.read_policy(repository / "config")
 SOURCE, RUNNER, VERIFIER = "1" * 40, "2" * 40, "3" * 40
 
 
@@ -34,13 +35,13 @@ def fixture(root, backend="cpu", source=SOURCE):
     write(expected_dir / "python-requirements.lock", "example-package==1.2.3\n")
     expected = dict(environment="public", backend=backend, mesh_revision=source,
                     cuda_series="none", rocm_version="none", runner_images_revision=RUNNER,
-                    playwright_version="1.62.1" if backend in {"web", "browser"} else "none")
+                    playwright_version=PINS["browser"]["playwright"] if backend in {"web", "browser"} else "none")
     stamps = {"mesh-runner-environment": "public", "mesh-runner-backend": backend, "mesh-llm-revision": source,
               "mesh-runner-images-revision": RUNNER, "mesh-runner-cuda-series": "none", "mesh-runner-rocm-version": "none"}
     if backend in {"ui", "browser"}:
-        stamps.update({"mesh-runner-node-major": "24", "mesh-runner-pnpm-version": "10.34.5"})
+        stamps.update({"mesh-runner-node-major": str(PINS["common"]["node_major"]), "mesh-runner-pnpm-version": PINS["common"]["pnpm"]})
     if backend in {"web", "browser"}:
-        stamps.update({"mesh-runner-playwright-version": "1.62.1", "mesh-runner-chromium-build": "chromium-1234"})
+        stamps.update({"mesh-runner-playwright-version": PINS["browser"]["playwright"], "mesh-runner-chromium-build": "chromium-1234"})
         (root / "opt/ms-playwright/chromium-1234").mkdir(parents=True)
     for name, value in stamps.items():
         write(root / "etc" / name, value + "\n")
@@ -50,7 +51,7 @@ def fixture(root, backend="cpu", source=SOURCE):
         files["Cargo.toml"] = "[workspace]\n"
         (root / "opt/mesh-llm/venv").mkdir(parents=True)
         write(root / "etc/mesh-runner-python-requirements.lock", "example-package==1.2.3\n")
-        write(root / "home/runner/externals/node24/lib/node_modules/openai/package.json", '{"version":"7.5.0"}')
+        write(root / "home/runner/externals/node24/lib/node_modules/openai/package.json", json.dumps({"version": PINS["full"]["openai_npm"]}))
     entries = []
     for name, content in files.items():
         write(manifests / name, content)
@@ -68,13 +69,13 @@ def observe(arguments):
     name = Path(arguments[0]).name
     if name == "uname": return "Linux x86_64\n"
     if name == "node":
-        if "playwright" in arguments[-1]: return '{"version":"1.62.1","chromium_build":"1234"}\n'
-        return '{"version":"24.18.0","modules_abi":"137","platform":"linux","architecture":"x64"}\n'
-    if name == "pnpm": return "10.34.5\n" if arguments[1] == "--version" else "/home/runner/.local/share/pnpm/store/v10\n"
-    if name == "just": return "just 1.57.0\n"
-    if name == "rustc": return "rustc 1.98.1 (hash date)\nbinary: rustc\ncommit-hash: " + "4" * 40 + "\ncommit-date: 2026-08-20\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.0\n"
-    if name == "cargo": return "cargo 1.98.1 (hash date)\n"
-    if name == "sccache": return "sccache 0.16.0\n"
+        if "playwright" in arguments[-1]: return json.dumps({"version": PINS["browser"]["playwright"], "chromium_build": "1234"})
+        return json.dumps({"version": f'{PINS["common"]["node_major"]}.0.0', "modules_abi": "137", "platform": "linux", "architecture": "x64"})
+    if name == "pnpm": return PINS["common"]["pnpm"] + "\n" if arguments[1] == "--version" else "/home/runner/.local/share/pnpm/store/v10\n"
+    if name == "just": return f'just {PINS["common"]["just"]}\n'
+    if name == "rustc": return f'rustc {PINS["full"]["rust"]} (hash date)\nbinary: rustc\ncommit-hash: ' + "4" * 40 + f'\ncommit-date: 2026-08-20\nhost: x86_64-unknown-linux-gnu\nrelease: {PINS["full"]["rust"]}\nLLVM version: 22.1.0\n'
+    if name == "cargo": return f'cargo {PINS["full"]["rust"]} (hash date)\n'
+    if name == "sccache": return f'sccache {PINS["full"]["sccache"]}\n'
     if name in {"python", "python3"}:
         if arguments[1:4] == ["-m", "pip", "check"]: return "No broken requirements found.\n"
         return '{"version":"3.12.3","abi":"cpython-312-x86_64-linux-gnu","packages":{"example-package":"1.2.3","pip":"24.0"}}\n'
@@ -95,7 +96,7 @@ class IdentityTests(unittest.TestCase):
                 directory, expected = fixture(root, backend)
                 receipt = collect(root, directory, expected)
                 self.assertEqual(receipt["type"], "mesh-llm-runner-runtime-identity")
-                self.assertEqual(receipt["tools"]["pnpm"]["version"], "10.34.5")
+                self.assertEqual(receipt["tools"]["pnpm"]["version"], PINS["common"]["pnpm"])
                 self.assertNotIn("image", receipt)
                 if backend in {"ui", "browser"}:
                     for tool in ("rustc", "cargo", "sccache", "openai_npm"):
@@ -103,7 +104,7 @@ class IdentityTests(unittest.TestCase):
                     self.assertIsNone(receipt["dependencies"]["python_lock_sha256"])
                     self.assertIsNone(receipt["cache"]["input_fingerprints"]["sccache"])
                 else:
-                    self.assertEqual(receipt["tools"]["rustc"]["release"], "1.98.1")
+                    self.assertEqual(receipt["tools"]["rustc"]["release"], PINS["full"]["rust"])
 
     def test_wrong_actual_tool_fails_even_when_stamp_and_pin_match(self):
         with tempfile.TemporaryDirectory() as temporary:

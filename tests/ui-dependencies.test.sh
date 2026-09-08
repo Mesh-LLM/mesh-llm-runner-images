@@ -17,7 +17,11 @@ printf '{}\n' > "$source_root/website/package.json"
 index_source() {
   local path hash
   while IFS= read -r path; do
-    hash="$(shasum -a 256 "$source_root/$path" | awk '{print $1}')"
+    if command -v sha256sum >/dev/null; then
+      hash="$(sha256sum "$source_root/$path" | awk '{print $1}')"
+    else
+      hash="$(shasum -a 256 "$source_root/$path" | awk '{print $1}')"
+    fi
     jq -cn --arg path "$path" --arg sha256 "$hash" '{path: $path, sha256: $sha256}'
   done < <(cd "$source_root" && find . -type f ! -name dependency-index.json | sed 's|^./||' | sort) \
     | jq -s '{schema: 1, files: .}' > "$source_root/dependency-index.json"
