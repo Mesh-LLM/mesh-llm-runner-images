@@ -7,7 +7,7 @@ temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 fixture="$temporary_directory/source"
 mkdir -p "$fixture/crates/sample/src" "$fixture/crates/mesh-llm-ui" \
-  "$fixture/website" "$temporary_directory/bundles"
+  "$fixture/website" "$fixture/.cargo" "$temporary_directory/bundles"
 
 expect_failure() {
   if "$@" >"$temporary_directory/failure.log" 2>&1; then
@@ -88,6 +88,9 @@ EOF
 printf 'pub fn original() {}\n' > "$fixture/crates/sample/src/lib.rs"
 printf '{"name":"ui","private":true}\n' > "$fixture/crates/mesh-llm-ui/package.json"
 printf 'engine-strict=true\n' > "$fixture/crates/mesh-llm-ui/.npmrc"
+printf 'registry=https://registry.npmjs.org/\n' > "$fixture/.npmrc"
+printf '[net]\noffline = true\n' > "$fixture/.cargo/config.toml"
+printf "lockfileVersion: '9.0'\n" > "$fixture/crates/mesh-llm-ui/pnpm-lock.yaml"
 printf 'packages:\n  - "."\n' > "$fixture/crates/mesh-llm-ui/pnpm-workspace.yaml"
 printf '{"name":"website","lockfileVersion":3,"packages":{}}\n' \
   > "$fixture/website/package-lock.json"
@@ -108,6 +111,64 @@ jq -e '.profile == "public" and (.source_revision | test("^[0-9a-f]{40}$"))
   and all(.manifests[]; .path != "crates/sample/src/lib.rs")' \
   "$baseline/manifest-index.json" >/dev/null
 [[ "$(cat "$baseline/dependencies/crates/sample/src/lib.rs")" == '#![allow(dead_code)]' ]]
+
+# Exercise the directory artifact boundary with the actual workflow input. Hidden
+# filtering follows the pinned upload-artifact action's excludeHiddenFiles option.
+# The negative roundtrip reproduces the hosted .npmrc failure; the enabled path
+# must preserve every indexed checksum, including hidden-directory Cargo config.
+python3 - "$repository_root" "$temporary_directory" "$BASH" <<'PYTHON'
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import zipfile
+
+repository, temporary = map(Path, sys.argv[1:3])
+bash = sys.argv[3]
+workflow = (repository / ".github/workflows/build-and-push.yml").read_text()
+upload = re.search(r"      - name: Upload manifest bundles\n(.*?)(?=\n  [a-z_]+:|\n      - name:)", workflow, re.S).group(1)
+assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in upload
+assert "          path: build-context/manifests\n" in upload
+configured_hidden = re.search(r"^          include-hidden-files: (true|false)$", upload, re.M)
+include_hidden = configured_hidden is not None and configured_hidden.group(1) == "true"
+download = (repository / ".github/workflows/stage-image-family.yml").read_text()
+download = re.search(r"      - name: Download manifest bundles\n(.*?)(?=\n      - name:)", download, re.S).group(1)
+assert "          path: build-context/manifests\n" in download
+assert "name: mesh-manifest-bundles-${{ github.run_attempt }}" in upload and "name: mesh-manifest-bundles-${{ github.run_attempt }}" in download
+source = temporary / "bundles/baseline"
+indexed = json.loads((source / "dependencies/dependency-index.json").read_text())["files"]
+for required in (".npmrc", "crates/mesh-llm-ui/.npmrc", ".cargo/config.toml"):
+    assert any(item["path"] == required for item in indexed), required
+    assert (source / "dependencies" / required).is_file(), required
+
+for name, hidden, success in (("default", False, False), ("configured", include_hidden, True)):
+    archive = temporary / (name + ".zip")
+    restored = temporary / ("download-" + name)
+    # upload's single-directory root is omitted; profile-relative paths survive.
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for path in sorted(source.rglob("*")):
+            relative = path.relative_to(source)
+            if path.is_file() and (hidden or not any(part.startswith(".") for part in relative.parts)):
+                zipped.write(path, Path("public") / relative)
+    with zipfile.ZipFile(archive) as zipped:
+        zipped.extractall(restored)
+    dependencies = restored / "public/dependencies"
+    result = subprocess.run([bash, str(repository / "scripts/prepare-ui-dependencies.sh"),
+                             str(dependencies), str(temporary / ("ui-" + name))], capture_output=True, text=True)
+    if not success:
+        assert result.returncode != 0 and ".npmrc" in result.stderr, result.stderr
+        assert not (dependencies / ".cargo/config.toml").exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        for item in indexed:
+            path = dependencies / item["path"]
+            assert path.is_file(), item["path"]
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"], item["path"]
+        assert (temporary / "ui-configured/.npmrc").read_bytes() == (source / "dependencies/.npmrc").read_bytes()
+        assert (temporary / "ui-configured/crates/mesh-llm-ui/.npmrc").read_bytes() == (source / "dependencies/crates/mesh-llm-ui/.npmrc").read_bytes()
+PYTHON
 
 # A new source revision changes audit metadata, not resolution inputs or stubs.
 printf 'New source documentation\n' > "$fixture/README.md"

@@ -521,3 +521,37 @@ promotes, so coordinate the merge/qualification window. UI/browser adoption
 requires those qualified immutable digests. CPU seed eligibility stays cold until
 a separate existing-seed workload canary proves benefit; preserve AMD64 CUDA ARC
 placement and companion release composer rows.
+
+
+## Stage 10 qualification in progress
+
+Draft runner-images PR #23 contains the implementation through Stage 9 at
+`d1149d2f7ab0e8bd532a649d24fcd1a103728260`. Draft packaging PR #27 is stacked
+on companion #26 and is green at `5a99ee5`; no companion branch changed.
+
+The first hosted runner validation, run `34183319275` attempt 1, passed policy
+and preparation but UI/browser builds failed because upload-artifact's default
+hidden-file filtering omitted collected `.npmrc` and `.cargo/config.toml` inputs.
+Root cancelled the remaining builds because their manifest artifact was also
+incomplete. The exact downloaded manifest artifact `10039668817` matched its
+662370-byte API size and SHA256 and contained no `.npmrc`.
+
+The upload now explicitly includes hidden files within the already selected
+manifest bundle. A regression reproduces default filtering through a fixture ZIP,
+then proves the workflow-configured roundtrip retains every indexed file checksum,
+root/UI `.npmrc`, Cargo configuration and successful UI dependency preparation.
+The dependency validator remains strict. Root reran collection, UI dependency and
+workflow matrix tests plus actionlint/ShellCheck; agent also checked Docker context.
+
+The failed run supplied real hosted production and skipped-verification metrics
+artifacts. Root checked exact ZIP size/SHA256 and imported them against the actual
+GitHub attempt record using the packaging CLI. Production failure retained a
+19-second wrapper measurement with null unavailable Depot IDs; skipped verification
+retained null invocation measurements. Raw refresh preserved both receipts and
+identical reimport wrote zero files. Evidence lives under
+`/tmp/mesh-runner-stage10-hosted-evidence`. This qualifies hosted partial receipt
+transport/import, not a successful image build or staged candidate.
+
+Continue hosted validation after the manifest fix. Do not call the runner PR green
+until all expected platform builds finish successfully. Trusted staging and
+production/consumer rollout still require the later gates above.

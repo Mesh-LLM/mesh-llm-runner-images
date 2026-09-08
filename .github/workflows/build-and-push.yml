@@ -252,6 +252,8 @@ jobs:
         with:
           name: mesh-manifest-bundles-${{ github.run_attempt }}
           path: build-context/manifests
+          # The indexed payload includes .npmrc and .cargo/config.toml.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
 
