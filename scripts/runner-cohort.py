@@ -101,6 +101,25 @@ def validate_origin(origin):
     datetime.strptime(origin["timestamp"], "%Y%m%d%H%M%S")
 
 
+def index_sources(row, catalog):
+    if row["backend_name"] == "mixed":
+        return next(index["sources"] for index in catalog["indexes"] if index["artifact"] == row["artifact"])
+    return [{"environment": row["environment"], "backend_id": row["backend_id"], "architecture": arch}
+            for arch in row["architectures"].split(",")]
+
+
+def validate_index(candidate, row, origin, children):
+    exact(candidate, ("schema", "type", "image", "environment", "backend", "mesh_revision", "runner_images_revision", "digest", "children"), "index candidate")
+    require(type(candidate["schema"]) is int and candidate["schema"] == 1
+            and candidate["type"] == "mesh-llm-runner-image-candidate" and candidate["image"] == IMAGE
+            and candidate["environment"] == row["environment"] and candidate["backend"] == backend(row)
+            and all(candidate[name] == origin[name] for name in ("mesh_revision", "runner_images_revision"))
+            and isinstance(candidate["digest"], str) and DIGEST.fullmatch(candidate["digest"]), "index differs from cohort/catalog")
+    require(candidate["children"] == sorted(children, key=lambda child: child["architecture"]), "index children differ from verified platforms")
+    require(len({c["digest"] for c in children}) == len(children), "duplicate index child digests")
+    require(sorted(c["architecture"] for c in children) == sorted(row["architectures"].split(",")), "index architecture set differs from catalog")
+
+
 def validate(cohort):
     exact(cohort, ("schema", "type", "image", "origin", "catalog_sha256", "candidates", "platforms"), "cohort")
     require(type(cohort["schema"]) is int and cohort["schema"] == 1 and cohort["type"] == "mesh-llm-runner-staged-cohort", "invalid cohort schema")
@@ -127,21 +146,11 @@ def validate(cohort):
         require(entry["receipt"] == receipt, "retained receipt differs from independently bound evidence")
     rows = matrix["promotion_matrix"]["include"]
     require(isinstance(cohort["candidates"], dict) and set(cohort["candidates"]) == {r["artifact"] for r in rows}, "incomplete or extra cohort indexes")
-    mixed = {row["artifact"]: row["sources"] for row in catalog["indexes"]}
     for row in rows:
-        candidate = cohort["candidates"][row["artifact"]]
-        exact(candidate, ("schema", "type", "image", "environment", "backend", "mesh_revision", "runner_images_revision", "digest", "children"), "index candidate")
-        require(type(candidate["schema"]) is int and candidate["schema"] == 1
-                and candidate["type"] == "mesh-llm-runner-image-candidate" and candidate["image"] == IMAGE
-                and candidate["environment"] == row["environment"] and candidate["backend"] == backend(row)
-                and all(candidate[name] == origin[name] for name in ("mesh_revision", "runner_images_revision"))
-                and isinstance(candidate["digest"], str) and DIGEST.fullmatch(candidate["digest"]), "index differs from cohort/catalog")
-        sources = mixed.get(row["artifact"], [{"environment": row["environment"], "backend_id": row["backend_id"], "architecture": arch}
-                                             for arch in row["architectures"].split(",")])
+        sources = index_sources(row, catalog)
         children = [{"os": "linux", "architecture": source["architecture"], "digest": cohort["platforms"][platform_key(**source)]["candidate"]["child_digest"]}
                     for source in sources]
-        require(candidate["children"] == sorted(children, key=lambda child: child["architecture"]), "index children differ from verified platforms")
-        require(len({c["digest"] for c in children}) == len(children), "duplicate index child digests")
+        validate_index(cohort["candidates"][row["artifact"]], row, origin, children)
     return matrix
 
 

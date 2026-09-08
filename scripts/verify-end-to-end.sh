@@ -97,8 +97,17 @@ require_command jq
 matrices="$(bash "$repository_root/scripts/generate-workflow-matrices.sh")"
 family_rows="$(jq -er '.family_matrix.include[] |
   [.environment, .backend_id, .backend_name, .cuda_series, .rocm_version, .architectures] | @tsv' <<< "$matrices")"
-cuda12_series="$(jq -er '.family_matrix.include[] |
-  select(.environment == "self-hosted" and .backend_id == "cuda12") | .cuda_series' <<< "$matrices")"
+mixed_rows="$(jq -er --slurpfile catalog "$repository_root/config/runner-image-families.json" '
+  .family_matrix.include as $families
+  | [$catalog[0].indexes[] | select(.artifact == "candidate-index-self-hosted-compatibility")]
+  | if length == 1 then .[0] else error("expected exactly one compatibility index") end
+  | .sources[] as $source
+  | $families[] | select(.environment == $source.environment and .backend_id == $source.backend_id)
+  | [.environment, .backend_name, .cuda_series, .rocm_version, $source.architecture] | @tsv' <<< "$matrices")"
+mixed_architectures=()
+while IFS=$'\t' read -r environment backend cuda_series rocm_version architecture; do
+  mixed_architectures+=("$architecture")
+done <<< "$mixed_rows"
 playwright_version="$(cat "$repository_root/config/playwright-pin.txt")"
 [[ "$playwright_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
   echo "invalid Playwright version pin" >&2
@@ -108,10 +117,12 @@ playwright_version="$(cat "$repository_root/config/playwright-pin.txt")"
 verify_image "$public_tag" public cpu none none none amd64 arm64
 resolve_alias "$image:$self_hosted_tag"
 self_hosted_reference="$resolved_reference"
-verify_manifest_list "$self_hosted_reference" amd64 arm64
-# The mixed compatibility index intentionally combines CUDA12 AMD64 and CPU ARM64.
-verify_local_execution "$self_hosted_reference" self-hosted cuda "$cuda12_series" none none amd64
-verify_local_execution "$self_hosted_reference" self-hosted cpu none none none arm64
+verify_manifest_list "$self_hosted_reference" "${mixed_architectures[@]}"
+while IFS=$'\t' read -r environment backend cuda_series rocm_version architecture; do
+  expected_playwright=none
+  if [[ "$backend" == web || "$backend" == browser ]]; then expected_playwright="$playwright_version"; fi
+  verify_local_execution "$self_hosted_reference" "$environment" "$backend" "$cuda_series" "$rocm_version" "$expected_playwright" "$architecture"
+done <<< "$mixed_rows"
 
 if [[ "$all_backends" == true ]]; then
   while IFS=$'\t' read -r environment backend_id backend cuda_series rocm_version architecture_list; do

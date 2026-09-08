@@ -401,18 +401,17 @@ grep -Fxq '      id-token: write' "$validate_families_job"
 grep -Fxq '      contents: read' "$stage_families_job"
 grep -Fxq '      id-token: write' "$stage_families_job"
 grep -Fxq '      packages: write' "$stage_families_job"
-candidate_tag_pattern="candidate-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}"
-workflow_candidate_tag_count="$(
-  grep -F -c "$candidate_tag_pattern" "$workflow"
-)"
-reusable_candidate_tag_count="$(
-  grep -F -c "$candidate_tag_pattern" "$reusable_workflow"
-)"
-candidate_tag_count="$(
-  printf '%s\n' \
-    "$((workflow_candidate_tag_count + reusable_candidate_tag_count))"
-)"
-[[ "$candidate_tag_count" -ge 2 ]]
+# These assertions intentionally match literal workflow shell variables.
+# shellcheck disable=SC2016
+for assembly_workflow in "$workflow" "$reusable_workflow"; do
+  [[ "$(grep -Fc 'python3 scripts/assemble-runner-index.py' "$assembly_workflow")" -eq 1 ]]
+  grep -Fq -- '--mesh-revision "$MESH_REVISION" --runner-images-revision "$RUNNER_IMAGES_REVISION"' "$assembly_workflow"
+  grep -Fq -- '--run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"' "$assembly_workflow"
+  grep -Fq -- '--output "$descriptor"' "$assembly_workflow"
+done
+grep -Fq -- '--environment self-hosted --backend-id compatibility' "$workflow"
+# shellcheck disable=SC2016
+grep -Fq -- '--environment "$ENVIRONMENT" --backend-id "$BACKEND_ID"' "$assemble_family_index_job"
 grep -Fq "needs.prepare.outputs.execution_mode == 'promote'" "$workflow"
 grep -Fq "scripts/reconcile-image-cohort.sh /tmp/publication/latest-cohort.json target" "$repository_root/.github/workflows/publish-cohort.yml"
 grep -Fq 'target retention window is 14 days' \

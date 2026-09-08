@@ -336,17 +336,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download CUDA 12 AMD64 platform candidate
+      - name: Download verified platform candidates for catalog sources
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: candidate-platform-self-hosted-cuda12-amd64-${{ github.run_attempt }}
-          path: /tmp/compatibility/cuda12
-
-      - name: Download CPU ARM64 platform candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: candidate-platform-self-hosted-cpu-arm64-${{ github.run_attempt }}
-          path: /tmp/compatibility/cpu
+          pattern: candidate-platform-*-${{ github.run_attempt }}
+          path: /tmp/compatibility-platforms
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -366,154 +361,15 @@ jobs:
           RUNNER_IMAGES_REVISION: ${{ needs.prepare.outputs.runner_images_revision }}
         run: |
           set -euo pipefail
-          cuda_descriptor="$(find /tmp/compatibility/cuda12 -type f -name '*.json' -print -quit)"
-          cpu_descriptor="$(find /tmp/compatibility/cpu -type f -name '*.json' -print -quit)"
-          [[ -n "$cuda_descriptor" && -n "$cpu_descriptor" ]]
-
-          validate_platform() {
-            local descriptor_file="$1"
-            local backend_id="$2"
-            local backend_name="$3"
-            local cuda_series="$4"
-            local architecture="$5"
-            jq -e \
-              --arg image "$IMAGE" \
-              --arg backend_id "$backend_id" \
-              --arg backend_name "$backend_name" \
-              --arg cuda_series "$cuda_series" \
-              --arg architecture "$architecture" \
-              --arg mesh_revision "$MESH_REVISION" \
-              --arg runner_images_revision "$RUNNER_IMAGES_REVISION" \
-              '
-                def exact_keys($expected): (keys | sort) == ($expected | sort);
-                def digest: type == "string" and test("^sha256:[0-9a-f]{64}$");
-                type == "object"
-                and exact_keys([
-                  "backend",
-                  "child_digest",
-                  "digest",
-                  "environment",
-                  "image",
-                  "mesh_revision",
-                  "platform",
-                  "runner_images_revision",
-                  "schema",
-                  "type"
-                ])
-                and .schema == 1
-                and .type == "mesh-llm-runner-image-platform-candidate"
-                and .image == $image
-                and .environment == "self-hosted"
-                and .backend == {
-                  id: $backend_id,
-                  name: $backend_name,
-                  cuda_series: (
-                    if $cuda_series == "none"
-                    then null
-                    else $cuda_series
-                    end
-                  ),
-                  rocm_version: null
-                }
-                and .mesh_revision == $mesh_revision
-                and .runner_images_revision == $runner_images_revision
-                and .platform == {
-                  os: "linux",
-                  architecture: $architecture
-                }
-                and (.digest | digest)
-                and (.child_digest | digest)
-              ' "$descriptor_file" >/dev/null
-          }
-          validate_platform "$cuda_descriptor" cuda12 cuda 12-9 amd64
-          validate_platform "$cpu_descriptor" cpu cpu none arm64
-
-          sources=(
-            "${IMAGE}@$(jq -er '.digest' "$cuda_descriptor")"
-            "${IMAGE}@$(jq -er '.digest' "$cpu_descriptor")"
-          )
-          expected_children="$(
-            jq -sc \
-              '[.[] | {
-                architecture: .platform.architecture,
-                digest: .child_digest,
-                os: .platform.os
-              }] | sort_by(.architecture)' \
-              "$cuda_descriptor" "$cpu_descriptor"
-          )"
-          candidate_tag="${IMAGE}:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-self-hosted-compatibility"
-          docker buildx imagetools create --tag "$candidate_tag" "${sources[@]}"
-          manifest_json="$(docker buildx imagetools inspect "$candidate_tag" --format '{{json .Manifest}}')"
-          digest="$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest_json")"
-          raw_manifest="$(docker buildx imagetools inspect "${IMAGE}@${digest}" --raw)"
-          actual_children="$(
-            jq -ce \
-              '
-                if (
-                  .schemaVersion == 2
-                  and (.manifests | type == "array")
-                  and all(
-                    .manifests[];
-                    .platform.os == "linux"
-                    or (
-                      .platform.os == "unknown"
-                      and .platform.architecture == "unknown"
-                      and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
-                    )
-                  )
-                ) then
-                  [
-                    .manifests[]
-                    | select(.platform.os == "linux")
-                    | {
-                        architecture: .platform.architecture,
-                        digest: .digest,
-                        os: .platform.os
-                      }
-                  ] | sort_by(.architecture)
-                else
-                  error("invalid compatibility index")
-                end
-              ' <<< "$raw_manifest"
-          )"
-          [[ "$actual_children" == "$expected_children" ]]
-
           descriptor=/tmp/candidate-index-self-hosted-compatibility.json
-          jq -n \
-            --arg image "$IMAGE" \
-            --arg runner_images_revision "$RUNNER_IMAGES_REVISION" \
-            --arg mesh_revision "$MESH_REVISION" \
-            --arg digest "$digest" \
-            --argjson children "$actual_children" \
-            '{
-              schema: 1,
-              type: "mesh-llm-runner-image-candidate",
-              image: $image,
-              environment: "self-hosted",
-              backend: {
-                id: "compatibility",
-                name: "mixed",
-                cuda_series: null,
-                rocm_version: null
-              },
-              runner_images_revision: $runner_images_revision,
-              mesh_revision: $mesh_revision,
-              digest: $digest,
-              children: $children
-            }' > "$descriptor"
-          scripts/validate-candidate-descriptor.sh \
-            --descriptor "$descriptor" \
-            --image "$IMAGE" \
-            --environment self-hosted \
-            --backend-id compatibility \
-            --backend-name mixed \
-            --cuda-series none \
-            --rocm-version none \
-            --mesh-revision "$MESH_REVISION" \
-            --runner-images-revision "$RUNNER_IMAGES_REVISION" \
-            --architectures amd64,arm64
+          python3 scripts/assemble-runner-index.py \
+            --platforms /tmp/compatibility-platforms \
+            --environment self-hosted --backend-id compatibility \
+            --mesh-revision "$MESH_REVISION" --runner-images-revision "$RUNNER_IMAGES_REVISION" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$descriptor"
           echo "descriptor=$descriptor" >> "$GITHUB_OUTPUT"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "digest=$(jq -er '.digest' "$descriptor")" >> "$GITHUB_OUTPUT"
 
       - name: Attest verified compatibility digest
         if: github.event.repository.visibility == 'public'

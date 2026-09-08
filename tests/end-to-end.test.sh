@@ -37,7 +37,12 @@ if [[ "$1" == buildx && "$2" == imagetools && "$3" == inspect ]]; then
     jq -cn --arg digest "${MOCK_RESOLVED_DIGEST:-$digest}" '{digest: $digest}'
   elif [[ "$reference" == *@sha256:* ]]; then
     jq -e --arg digest "${reference##*@}" 'any(.[]; .first_digest == $digest)' "$MOCK_REGISTRY_STATE" >/dev/null
-    jq -cn --arg architectures "${MOCK_ARCHITECTURES:-amd64,arm64}" \
+    architectures="${MOCK_ARCHITECTURES:-amd64,arm64}"
+    if [[ -n "${MOCK_MIXED_ARCHITECTURES:-}" ]]; then
+      alias="$(jq -er --arg digest "${reference##*@}" 'to_entries[] | select(.value.first_digest == $digest) | .key' "$MOCK_REGISTRY_STATE")"
+      if [[ "$alias" == *:self-hosted-latest ]]; then architectures="$MOCK_MIXED_ARCHITECTURES"; fi
+    fi
+    jq -cn --arg architectures "$architectures" \
       '{manifests: [$architectures | split(",")[] | {platform: {os: "linux", architecture: .}}]}'
   else
     echo "mutable alias used for raw inspection: $reference" >&2
@@ -189,6 +194,24 @@ bash "$verifier" --all-backends >/dev/null
 assert_backend public-web-latest amd64 public web none none 1.60.0
 assert_backend public-browser-latest amd64 public browser none none 1.60.0
 assert_backend self-hosted-latest amd64 self-hosted cuda 12-8 none none
+
+# Mixed child selection follows explicit catalog sources, independently of SDK pins.
+jq '(.indexes[] | select(.artifact == "candidate-index-self-hosted-compatibility") | .sources[] | select(.architecture == "amd64") | .backend_id) = "cuda13"' \
+  "$catalog" > "$temporary_directory/catalog.json"
+cp "$temporary_directory/catalog.json" "$catalog"
+reset_mock
+bash "$verifier" >/dev/null
+assert_backend self-hosted-latest amd64 self-hosted cuda 13-1 none none
+assert_backend self-hosted-latest arm64 self-hosted cpu none none none
+
+# A catalog-valid one-platform compatibility index requires only that platform.
+jq '(.indexes[] | select(.artifact == "candidate-index-self-hosted-compatibility")) |= (.architectures = ["amd64"] | .sources |= map(select(.architecture == "amd64")))' \
+  "$catalog" > "$temporary_directory/catalog.json"
+cp "$temporary_directory/catalog.json" "$catalog"
+reset_mock
+MOCK_MIXED_ARCHITECTURES=amd64 bash "$verifier" >/dev/null
+assert_backend self-hosted-latest amd64 self-hosted cuda 13-1 none none
+jq -se '([.[] | select(.[0] == "run")] | length) == 3' "$MOCK_DOCKER_LOG" >/dev/null
 
 reset_mock
 printf 'invalid\n' > "$temporary_directory/repo/config/playwright-pin.txt"

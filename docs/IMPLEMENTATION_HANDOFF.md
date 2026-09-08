@@ -9,7 +9,7 @@ Complete the remaining runner-image optimizations from the revised audit in
 `/Users/ndizazzo/dev/mesh/worktrees/runner-image-improvements`, branch
 `codex/runner-image-improvements`. Work in stages and require focused tests,
 appropriate real image checks, and independent review before advancing.
-Stages 1–7 are complete; continue with catalog-driven index assembly and helper consolidation. Coordinate tests and consumer integration
+Stages 1–8 are complete; continue with supplemental runner-image metrics. Coordinate tests and consumer integration
 with task `01a07dce-676e-7640-9715-cf40b62790dc`, preserve its release changes and
 frozen worktrees, and wait for any changes that invalidate a test's inputs.
 Keep AMD64 CUDA compilation on the existing desk k3s ARC runner. Complete only
@@ -302,8 +302,7 @@ Both Docker slots are free again; coordinate the next use.
   Preserve unknown values and distinguish GitHub wrapper time, Depot
   execution, filesystem identities, and compressed registry bytes.
 
-The cohort/promotion and metrics designs were reviewed read-only by the existing
-agents; those implementations have not started.
+The cohort/promotion implementation is complete through Stage 8. Metrics design is ready; implementation is the next stage.
 
 ## Companion task and test coordination
 
@@ -410,3 +409,51 @@ compatibility JSON shape fix, with CI rerunning. Packaging PR #26 is green at
 `30b4ff8`. Our consumer/image proof source remains frozen at `cd602d6c` until
 any source-dependent integration is coordinated. Both native Docker slots are
 free.
+
+
+## Stage 8 complete
+
+GPT-6 Astra at low reasoning effort completed the delegated implementation.
+Root integrated its prepared patch, independently reviewed the code, reran the
+focused tests and real metadata replay, and corrected the remaining scope through
+review. No primary checkout changed.
+
+One catalog-driven index assembler replaces both inline workflow implementations.
+It validates selected immutable platform descriptors before creating a candidate,
+checks the returned registry bytes against the resolved digest, and requires the
+exact verified child set. It supports valid attestations and optional OCI platform
+metadata such as variants, rejects duplicate JSON keys, and uses the existing
+bounded metadata reader. Cohort admission shares its source selection and index
+validation. Deployment smoke verification now follows the catalog's mixed sources
+and architecture list while preserving the default CUDA12 AMD64/CPU ARM64 mapping.
+
+Validation:
+
+- All 26 host suites passed in `/tmp/mesh-runner-stage8-agent-final-tests.log`,
+  including eight assembly tests covering all 16 indexes and catalog source
+  mutation, input rejection before mutation, bad registry children/digests,
+  duplicate keys, valid attestations/variant metadata, and metadata bounds.
+- The final architecture-list adjustment was verified independently by root in
+  `/tmp/mesh-runner-stage8-e2e-final.log`. Its fixture uses an AMD64-only mixed
+  index while keeping the public CPU index dual-platform.
+- Root independently reran eight assembly tests in
+  `/tmp/mesh-runner-stage8-root-review.log`. Final ShellCheck, actionlint,
+  Python compilation, and diff checks passed.
+- Root fetched the 856-byte published web index at digest
+  `sha256:b829ca922b1a40b78de1e887ef1786ff5679c60ba3402c289d37c5e8774222ed`
+  read-only, verified its hash, and replayed it through the new assembler with
+  creation intercepted. It preserved the runnable child and attestation.
+  `/tmp/mesh-runner-stage8-real-metadata-proof.py` and
+  `/tmp/mesh-runner-stage8-real-metadata-result.json` retain this proof.
+  This validates real metadata compatibility, not remote index publication.
+
+No image instructions, consumer source, or backend placement changed. No image
+build, remote registry write, workflow dispatch, push, or PR was made for Stage 8.
+Continue with Stage 9 metrics using `/tmp/mesh-runner-stage9-contract.md` as the
+reviewed design starting point. The companion task explicitly transferred new
+phase labels and optional offline enrichment to this task, in an isolated
+follow-up based on packaging `30b4ff8bb4fc2bb0c26acf2c2e786f5e02e2ecc8`.
+Its MeshLLM PR #1684 is now fully green at
+`fdef9cfc978f71f8ed8882362b3d9b414f6688df`; packaging PR #26 is also fully green.
+Both remain drafts. Our frozen image/consumer proof source stays `cd602d6c`
+until a later source-dependent integration explicitly updates it.
