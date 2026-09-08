@@ -121,7 +121,19 @@
         "arm64"
       ],
       "artifact": "candidate-index-self-hosted-compatibility",
-      "tag_stem": "self-hosted"
+      "tag_stem": "self-hosted",
+      "sources": [
+        {
+          "environment": "self-hosted",
+          "backend_id": "cuda12",
+          "architecture": "amd64"
+        },
+        {
+          "environment": "self-hosted",
+          "backend_id": "cpu",
+          "architecture": "arm64"
+        }
+      ]
     }
   ]
 }

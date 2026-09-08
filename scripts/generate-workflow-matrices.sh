@@ -103,6 +103,7 @@ if ! jq -e '
       "cuda_series",
       "environment",
       "rocm_version",
+      "sources",
       "tag_stem"
     ])
     and (.environment == "public" or .environment == "self-hosted")
@@ -111,6 +112,12 @@ if ! jq -e '
     and .cuda_series == null
     and .rocm_version == null
     and (.architectures | architectures)
+    and (.sources | type == "array" and length > 0 and all(.[];
+      type == "object" and exact_keys(["environment", "backend_id", "architecture"])
+      and (.environment == "public" or .environment == "self-hosted")
+      and (.backend_id | identifier)
+      and (.architecture == "amd64" or .architecture == "arm64")))
+    and ([.sources[].architecture] | sort) == (.architectures | sort)
     and (.artifact | type == "string" and test("^candidate-index-[a-z0-9-]+$"))
     and (.tag_stem | tag_stem);
 
@@ -141,6 +148,11 @@ if ! jq -e '
     | (($backend.environments // $root.environments) | index($alias.environment)) != null
   )
   and (.indexes | type == "array" and all(.[]; index))
+  and all(.indexes[].sources[];
+    . as $source | any($root.backends[];
+      .id == $source.backend_id
+      and ((.environments // $root.environments) | index($source.environment)) != null
+      and (.architectures | index($source.architecture)) != null))
   and ([.indexes[].artifact] | length == (unique | length))
   and (
     (

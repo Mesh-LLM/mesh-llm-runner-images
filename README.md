@@ -136,19 +136,19 @@ performing the check and remains separate from both image source revisions.
 `.github/workflows/build-and-push.yml` runs on pull requests, pushes to `main`, a weekly schedule, and manual dispatch. It:
 
 1. validates the workflow and immutable-candidate contract before expensive work;
-2. checks out the requested MeshLLM ref and generates both manifest bundles;
+2. checks out the requested MeshLLM ref and generates manifest bundles for builds, or admits an exact retained attempt for manual promotion;
 3. builds affected pull-request families plus one always-on public CPU AMD64 contract row, while trusted main and scheduled runs remain exhaustive;
-4. verifies each trusted staged image through its exact registry digest, then assembles and validates one immutable index descriptor per family;
+4. verifies each staged platform digest, assembles and attests its family indexes, and retains a complete cohort for 14 days;
 5. promotes timestamp, MeshLLM compatibility, and digest-derived immutable tags from those descriptors without rebuilding;
 6. records the complete previous/target `latest` map, then reconciles the eventual `latest` cohort from that retained manifest.
 
-Execution is explicit: `validate` builds test targets without registry writes, `stage` pushes and verifies run-scoped candidates without moving production aliases, and `promote` performs the same staging before versioned and eventual-`latest` reconciliation. Manual dispatch defaults to `validate`; any staging or promotion requires the exact repository, `refs/heads/main`, and the default-branch caller workflow. Main pushes stage candidates, while the weekly schedule performs the deliberate production promotion.
+Execution is explicit: `validate` builds test targets without registry writes, `stage` pushes and verifies run-scoped candidates without moving production aliases, and manual `promote` requires `staged_run_id` plus `staged_run_attempt` from a successful staged run. It skips MeshLLM checkout, manifest preparation, and all image builds. The weekly schedule stages and promotes its own complete cohort. Manual dispatch defaults to `validate`; any staging or promotion requires the exact repository, `refs/heads/main`, and the default-branch caller workflow. Main pushes stage candidates, and publication is serialized across versioned tags, the previous-latest snapshot, and latest reconciliation.
 
 Pull requests receive no package-write permission and run only affected
 families plus the public CPU AMD64 contract row. Every platform build uses
 Depot remote BuildKit and its persistent project-scoped cache; no job imports
 or exports `type=gha` cache archives. Public fork builds are isolated from the
-project cache by Depot. Trusted staging and promotion push immutable platform
+project cache by Depot. Trusted staging pushes immutable platform
 digests directly from the remote builder to GHCR, while GHCR remains the
 canonical registry. The checked-in Depot project configuration and required
 OIDC trust setup are documented in `docs/OPERATIONS.md`.

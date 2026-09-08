@@ -18,5 +18,11 @@ config-variables: null
 # "ignore" is an array of regular expression patterns. Matched error messages
 # are ignored. This is similar to the "-ignore" command line option.
 paths:
+  # GitHub supports queue:max; pinned actionlint does not yet parse this key.
+  # tests/staged-cohort.test.sh enforces the exact publication lock mapping.
+  # https://github.com/rhysd/actionlint/issues/680
+  .github/workflows/build-and-push.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
 #  .github/workflows/**/*.yml:
 #    ignore: []

@@ -99,6 +99,22 @@ inspect_optional_digest() {
   return 1
 }
 
+jq -er '
+    if (type == "object" and keys == ["include"] and (.include | type == "array" and length > 0) and all(.include[]; type == "object" and (keys | sort) == (["environment", "backend_id", "backend_name", "cuda_series", "rocm_version", "architectures", "artifact", "tag_stem", "compatibility_tag_stem"] | sort) and all(.[]; type == "string" and (test("[\\t\\r\\n]") | not)))) then .include[] else error("invalid promotion matrix") end
+    | [
+        .environment,
+        .backend_id,
+        .backend_name,
+        .cuda_series,
+        .rocm_version,
+        .architectures,
+        .artifact,
+        .tag_stem,
+        .compatibility_tag_stem
+      ]
+    | @tsv
+  ' "$matrix_file" > "$temporary_directory/rows.tsv"
+
 while IFS=$'\t' read -r environment backend_id backend_name cuda_series \
   rocm_version architectures artifact tag_stem compatibility_tag_stem; do
   descriptor="$descriptor_directory/${artifact}.json"
@@ -119,8 +135,7 @@ while IFS=$'\t' read -r environment backend_id backend_name cuda_series \
     --architectures "$architectures"
 
   target_digest="$(jq -er '.digest' "$descriptor")"
-  mapfile -t latest_arguments < <(
-    bash "$script_directory/generate-promotion-tags.sh" \
+  bash "$script_directory/generate-promotion-tags.sh" \
       latest \
       "$image" \
       "$tag_stem" \
@@ -128,8 +143,8 @@ while IFS=$'\t' read -r environment backend_id backend_name cuda_series \
       "$timestamp" \
       "$mesh_revision" \
       "$runner_images_revision" \
-      "$target_digest"
-  )
+      "$target_digest" > "$temporary_directory/latest-tags.txt"
+  mapfile -t latest_arguments < "$temporary_directory/latest-tags.txt"
   [[ "$((${#latest_arguments[@]} % 2))" -eq 0 ]]
   for ((index = 0; index < ${#latest_arguments[@]}; index += 2)); do
     [[ "${latest_arguments[$index]}" == --tag ]] || {
@@ -163,23 +178,7 @@ while IFS=$'\t' read -r environment backend_id backend_name cuda_series \
         )
       }' >> "$entries_file"
   done
-done < <(
-  jq -er '
-    .include[]
-    | [
-        .environment,
-        .backend_id,
-        .backend_name,
-        .cuda_series,
-        .rocm_version,
-        .architectures,
-        .artifact,
-        .tag_stem,
-        .compatibility_tag_stem
-      ]
-    | @tsv
-  ' "$matrix_file"
-)
+done < "$temporary_directory/rows.tsv"
 
 [[ "${#seen_tags[@]}" -gt 0 ]] || {
   echo "latest cohort contains no tags" >&2

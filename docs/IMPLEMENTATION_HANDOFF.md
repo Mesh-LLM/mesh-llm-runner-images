@@ -9,7 +9,7 @@ Complete the remaining runner-image optimizations from the revised audit in
 `/Users/ndizazzo/dev/mesh/worktrees/runner-image-improvements`, branch
 `codex/runner-image-improvements`. Work in stages and require focused tests,
 appropriate real image checks, and independent review before advancing.
-Stages 1–6 are complete; continue with retained-cohort promotion and publication serialization. Coordinate tests and consumer integration
+Stages 1–7 are complete; continue with catalog-driven index assembly and helper consolidation. Coordinate tests and consumer integration
 with task `01a07dce-676e-7640-9715-cf40b62790dc`, preserve its release changes and
 frozen worktrees, and wait for any changes that invalidate a test's inputs.
 Keep AMD64 CUDA compilation on the existing desk k3s ARC runner. Complete only
@@ -355,3 +355,58 @@ the companion task's status. Use Homebrew Bash through PATH for local shell
 tests. Before MeshLLM CI edits, read its complete manage-ci skill and required
 inventory/topology documents. Validate each stage before starting the next one.
 The user has explicitly resumed the goal. No recurring automation is configured.
+
+## Stage 7 complete
+
+Retained-cohort promotion and publication serialization are implemented and
+validated locally. Manual promotion requires an exact successful staged run ID
+and attempt and skips MeshLLM checkout, manifest preparation, and image builds.
+The weekly schedule seals its own cohort after all staging dependencies succeed.
+The retained JSON contains 16 index candidates, 23 platform receipts, original
+source/workflow identifiers, and exact OCI metadata bytes. Current trusted
+helpers validate GitHub run/artifact origin, immutable artifact ID and ZIP
+size/digest, catalog completeness, source consistency, and independently
+re-bind every receipt against current policy. Attempt-qualified input artifact
+names prevent partial retries from mixing evidence across attempts.
+
+Build attestations now originate in staging. One reusable-publication caller
+holds `runner-image-publication` concurrency across versioned tags, the retained
+previous-latest snapshot, and latest reconciliation. Staging can run independently.
+GitHub's documented `queue: max` allows 100 pending publications; extra arrivals
+are cancelled. The pinned actionlint lacks this syntax, so only its precise
+unknown-queue diagnostic is ignored for the caller workflow, with a focused test
+of the complete fixed concurrency mapping.
+
+Validation:
+
+- All 25 host suites passed: `/tmp/mesh-runner-stage7-contracts-final.log`.
+- Fifteen new cohort tests include all 23 platform/16 index bindings, exact
+  attempt and repository checks, expired/tampered/unsafe archives, missing or
+  incompatible evidence, digest-only publication, retry, and late versioned
+  failure before any latest write. The synthetic registry records every command.
+- Latest-cohort tests now reject jq producer and tag-generator failures instead
+  of accepting truncated process-substitution output.
+- ShellCheck, actionlint, Python compilation, and diff checks passed.
+- The companion task independently reviewed admission/workflows and reran the
+  then-current 12 admission tests plus cohort reconciliation tests with no
+  findings. Root added and verified three full-publication tests afterward.
+- Read-only live API validation passed for existing successful scheduled run
+  `34106281467`, attempt 1. A 553-byte legacy candidate artifact `10012740162`
+  matched both its API archive size and SHA256. Evidence is retained under
+  `/tmp/mesh-runner-stage7-api-shape`. This proves the API/ZIP transport assumptions,
+  not hosted admission of the new format.
+
+No image instructions changed and no image rebuild was needed for this stage.
+No remote workflow was dispatched, registry tags changed, commit pushed, or PR
+created. Hosted retained-cohort admission, original-stage attestations, and
+concurrent queue behavior remain rollout canary gates. Continue with shared
+catalog-driven index assembly/helper consolidation, then supplemental metrics
+and final hosted/backend qualification before consumer adoption. The catalog
+now records explicit mixed-index sources; the remaining inline index assembly
+blocks should consume that data through one tested helper.
+
+The companion task's MeshLLM PR #1684 has advanced to `fdef9cfc9` for the runtime
+compatibility JSON shape fix, with CI rerunning. Packaging PR #26 is green at
+`30b4ff8`. Our consumer/image proof source remains frozen at `cd602d6c` until
+any source-dependent integration is coordinated. Both native Docker slots are
+free.

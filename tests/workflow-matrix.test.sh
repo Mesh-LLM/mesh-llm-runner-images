@@ -414,7 +414,7 @@ candidate_tag_count="$(
 )"
 [[ "$candidate_tag_count" -ge 2 ]]
 grep -Fq "needs.prepare.outputs.execution_mode == 'promote'" "$workflow"
-grep -Fq "scripts/reconcile-image-cohort.sh \"\$manifest\" target" "$workflow"
+grep -Fq "scripts/reconcile-image-cohort.sh /tmp/publication/latest-cohort.json target" "$repository_root/.github/workflows/publish-cohort.yml"
 grep -Fq 'target retention window is 14 days' \
   "$repository_root/docs/OPERATIONS.md"
 operations_audit="$temporary_directory/live-enablement-audit.md"

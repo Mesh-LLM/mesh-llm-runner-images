@@ -182,3 +182,19 @@ if grep -q '^buildx imagetools create ' "$preflight_log"; then
 fi
 
 echo "latest cohort reconciliation contract passed"
+
+# A jq or tag-generator failure must not silently truncate the cohort.
+jq '.include += [1]' "$temporary_directory/matrix.json" > "$temporary_directory/malformed-matrix.json"
+jq '.include[0].tag_stem = "invalid:stem"' "$temporary_directory/matrix.json" > "$temporary_directory/invalid-tag-matrix.json"
+for invalid_matrix in malformed invalid-tag; do
+  expect_failure env \
+    MOCK_DOCKER_LOG="$temporary_directory/$invalid_matrix.log" \
+    MOCK_DOCKER_SOURCE_DIGEST="$digest" DOCKER_BIN="$mock_docker" \
+    bash "$generator" \
+      --descriptors "$descriptor_directory" \
+      --matrix "$temporary_directory/$invalid_matrix-matrix.json" \
+      --image "$image" --timestamp "$timestamp" \
+      --mesh-revision "$mesh_revision" --runner-images-revision "$runner_images_revision" \
+      --output "$temporary_directory/$invalid_matrix-output.json"
+  [[ ! -e "$temporary_directory/$invalid_matrix-output.json" ]]
+done
