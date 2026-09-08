@@ -9,7 +9,7 @@ Complete the remaining runner-image optimizations from the revised audit in
 `/Users/ndizazzo/dev/mesh/worktrees/runner-image-improvements`, branch
 `codex/runner-image-improvements`. Work in stages and require focused tests,
 appropriate real image checks, and independent review before advancing.
-Stages 1–8 are complete; continue with supplemental runner-image metrics. Coordinate tests and consumer integration
+Stages 1–9 are complete; continue with hosted/backend qualification and qualified consumer adoption. Coordinate tests and consumer integration
 with task `01a07dce-676e-7640-9715-cf40b62790dc`, preserve its release changes and
 frozen worktrees, and wait for any changes that invalidate a test's inputs.
 Keep AMD64 CUDA compilation on the existing desk k3s ARC runner. Complete only
@@ -302,7 +302,7 @@ Both Docker slots are free again; coordinate the next use.
   Preserve unknown values and distinguish GitHub wrapper time, Depot
   execution, filesystem identities, and compressed registry bytes.
 
-The cohort/promotion implementation is complete through Stage 8. Metrics design is ready; implementation is the next stage.
+The cohort/promotion implementation is complete through Stage 8. Supplemental metrics is complete through Stage 9; hosted/backend qualification and qualified consumer adoption remain.
 
 ## Companion task and test coordination
 
@@ -457,3 +457,67 @@ Its MeshLLM PR #1684 is now fully green at
 `fdef9cfc978f71f8ed8882362b3d9b414f6688df`; packaging PR #26 is also fully green.
 Both remain drafts. Our frozen image/consumer proof source stays `cd602d6c`
 until a later source-dependent integration explicitly updates it.
+
+
+## Stage 9 complete
+
+GPT-6 Astra at low reasoning effort implemented the producer and companion
+consumer in separate worktrees. Root independently reviewed integration, reran
+both repositories' host checks, and compared the Python and TypeScript parsers.
+
+The family workflow retains separate production and verification invocation
+bundles, including partial and skipped outcomes. Receipts preserve exact source,
+run/attempt, family/platform, Depot IDs, context estimates and wrapper duration.
+Verification can reuse bound identity descriptors and capture bounded plain
+BuildKit cache observations. Missing execution/transfer measurements remain null.
+Legacy production metrics share the same immediate post-build timer snapshot.
+No candidate/admission format or image instruction changed.
+
+The packaging follow-up lives at
+`/Users/ndizazzo/dev/mesh/worktrees/packaging-runner-image-metrics`, branch
+`codex/runner-image-metrics`, based exactly on companion checkpoint
+`30b4ff8bb4fc2bb0c26acf2c2e786f5e02e2ecc8`. Explicit offline import validates
+all bundles before per-file atomic replacement, joins exact attempts and role
+steps, preserves validated enrichment across collector refresh, and reports
+producer evidence separately from Actions timing. The automatic collector still
+downloads no artifact contents. Exact new cohort transfer/publication labels are
+classified without duplicating the companion's family/history model.
+
+Independent review corrected skipped-role joins, contradictory toolkit fields,
+CRLF parsing, and missing phase labels. Skipped production may retain a separately
+measured context estimate; skipped invocation IDs/timing/cache/binding remain null.
+Skipped verification also has null context. Real BuildKit progress envelopes and
+plain executor terminals are tested; no cache hit rate or saved time is inferred.
+
+Validation:
+
+- Root ran all 27 runner-image host suites successfully:
+  `/tmp/mesh-runner-stage9-root-all.log`. Focused producer coverage is 18 tests.
+- Root ran the complete packaging TypeScript suite: 167 tests, 166 passed,
+  one skipped, zero failures, in
+  `/tmp/mesh-runner-stage9-root-packaging-all.log`.
+- Actionlint, ShellCheck and diff checks passed. The precise existing
+  actionlint exception for the main workflow's supported `queue` key remains.
+- Thirteen Python/TypeScript differential cases passed against actual local
+  cold/warm BuildKit rawjson/plain logs, LF/CRLF/CR boundaries, and malformed
+  evidence. `/tmp/mesh-stage9-root-parser-parity.json` records the result.
+- Root replayed a real retained Stage 5 AMD64 web identity through producer CLI
+  and consumer import: all 39 layers preserved and Actions timing unchanged.
+  `/tmp/mesh-stage9-real-identity-replay-path` locates the evidence. GitHub/Depot
+  metadata in this offline harness is explicitly synthetic; it is not a hosted
+  invocation measurement.
+- Capture tests cover success/failure exit status, bounded overflow, existing
+  output refusal before command launch, and cancellation child cleanup.
+
+The companion confirmed no further source/contract changes or Docker use.
+Both native Docker slots are free. Source-dependent image proof remains frozen
+at `cd602d6c`. No registry publication or consumer image switch occurred here.
+
+Next qualification gate: native representative CUDA/ROCm verification and hosted
+validation can run before merge. Actual staging requires the trusted main
+workflow and produces the complete 23-platform/16-index cohort. Admit that exact
+successful run/attempt read-only before publication. The weekly schedule also
+promotes, so coordinate the merge/qualification window. UI/browser adoption
+requires those qualified immutable digests. CPU seed eligibility stays cold until
+a separate existing-seed workload canary proves benefit; preserve AMD64 CUDA ARC
+placement and companion release composer rows.

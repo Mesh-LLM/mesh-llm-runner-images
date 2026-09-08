@@ -80,6 +80,16 @@ jobs:
     timeout-minutes: 60
     env:
       DEPOT_PROJECT_ID: mzm95zcv7p
+      METRICS_REPOSITORY: ${{ github.repository }}
+      METRICS_WORKFLOW_PATH: .github/workflows/build-and-push.yml
+      METRICS_RUN_ID: ${{ github.run_id }}
+      METRICS_RUN_ATTEMPT: ${{ github.run_attempt }}
+      METRICS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      METRICS_RUNNER_IMAGES_SHA: ${{ inputs.runner_images_revision }}
+      METRICS_MESH_LLM_SHA: ${{ inputs.mesh_revision }}
+      METRICS_ENVIRONMENT: ${{ inputs.environment }}
+      METRICS_BACKEND_ID: ${{ inputs.backend_id }}
+      METRICS_PLATFORM: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix: >-
@@ -293,6 +303,40 @@ jobs:
           provenance: ${{ inputs.execution_mode != 'validate' && 'mode=max' || 'false' }}
           sbom: ${{ inputs.execution_mode != 'validate' }}
 
+      - name: Stop Depot build timer
+        id: build_end
+        if: always()
+        shell: bash
+        env:
+          STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+        run: |
+          if [[ "$STARTED_AT" =~ ^[0-9]+$ ]]; then
+            echo "elapsed_seconds=$(( $(date +%s) - STARTED_AT ))" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Retain production invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        shell: bash
+        env:
+          METRICS_OUTCOME: ${{ steps.build.outcome }}
+          METRICS_BUILD_ID: ${{ steps.build.outputs.build-id }}
+          METRICS_PROJECT_ID: ${{ steps.build.outputs.project-id }}
+          METRICS_ELAPSED_SECONDS: ${{ steps.build_end.outputs.elapsed_seconds }}
+          METRICS_CONTEXT_BYTES: ${{ steps.context.outputs.content_bytes }}
+          METRICS_CONTEXT_FILES: ${{ steps.context.outputs.file_count }}
+        run: |
+          python3 scripts/runner-build-metrics.py --role production \
+            --output "$RUNNER_TEMP/runner-metrics-production"
+
+      - name: Upload production invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runner-metrics-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ github.run_attempt }}-production
+          path: ${{ runner.temp }}/runner-metrics-production
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Record Depot build metrics
         id: build_metrics
         if: always()
@@ -313,11 +357,11 @@ jobs:
           IS_PUBLIC_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
           RUNNER_ARCH: ${{ runner.arch }}
           RUNNER_OS: ${{ runner.os }}
-          STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+          ELAPSED_SECONDS: ${{ steps.build_end.outputs.elapsed_seconds }}
         run: |
           set -euo pipefail
-          if [[ "$STARTED_AT" =~ ^[0-9]+$ ]]; then
-            elapsed_seconds="$(( $(date +%s) - STARTED_AT ))"
+          if [[ "$ELAPSED_SECONDS" =~ ^[0-9]+$ ]]; then
+            elapsed_seconds="$ELAPSED_SECONDS"
           else
             elapsed_seconds=unavailable
           fi
@@ -530,7 +574,10 @@ jobs:
           verifier_revision="$VERIFIER_REVISION"
           identity_directory="$RUNNER_TEMP/runner-identity"
           mkdir -p "$identity_directory"
-          depot build \
+          python3 scripts/capture-build-invocation.py \
+            --log "$identity_directory/cache.log" \
+            --state "$identity_directory/invocation-state.json" \
+            -- depot build \
             --project "$DEPOT_PROJECT_ID" \
             --file Dockerfile.verify \
             --target identity-output \
@@ -563,6 +610,36 @@ jobs:
             --output "$identity_directory/identity.json"
           echo "receipt=$identity_directory/identity.json" >> "$GITHUB_OUTPUT"
           echo "evidence=$identity_directory" >> "$GITHUB_OUTPUT"
+
+      - name: Retain verification invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        shell: bash
+        env:
+          METRICS_OUTCOME: ${{ steps.verify.outcome }}
+          METRICS_VERIFIER_SHA: ${{ steps.selection.outputs.verifier_revision }}
+        run: |
+          cache_args=()
+          # Failed builds may not write metadata. Unbound logs are not cache proof.
+          if [[ -f "$RUNNER_TEMP/runner-identity/verification-build.json" ]] && \
+            jq -e '."depot.build" | (.buildID | type == "string" and length > 0) and (.projectID | type == "string" and length > 0)' \
+              "$RUNNER_TEMP/runner-identity/verification-build.json" >/dev/null; then
+            cache_args=(--cache-log "$RUNNER_TEMP/runner-identity/cache.log" --cache-format buildkit-plain-v1)
+          fi
+          python3 scripts/runner-build-metrics.py --role verification \
+            "${cache_args[@]}" \
+            --output "$RUNNER_TEMP/runner-metrics-verification" \
+            --metadata "$RUNNER_TEMP/runner-identity/verification-build.json" \
+            --state "$RUNNER_TEMP/runner-identity/invocation-state.json" \
+            --identity "$RUNNER_TEMP/runner-identity/identity.json"
+
+      - name: Upload verification invocation measurements
+        if: always() && steps.selection.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: runner-metrics-${{ inputs.environment }}-${{ inputs.backend_id }}-${{ matrix.platform_id }}-${{ github.run_attempt }}-verification
+          path: ${{ runner.temp }}/runner-metrics-verification
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload verified runner identity
         if: inputs.execution_mode != 'validate'
