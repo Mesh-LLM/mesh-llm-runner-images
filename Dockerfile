@@ -265,20 +265,24 @@ FROM public AS public-test
 ARG BACKEND
 ARG MESH_LLM_REVISION
 ARG RUNNER_IMAGES_REVISION
+ARG VERIFIER_REVISION
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
-COPY config/playwright-pin.txt /tmp/mesh-runner-expected-playwright.txt
-RUN expected_playwright=none \
-    && if [[ "${BACKEND}" == web ]]; then expected_playwright="$(cat /tmp/mesh-runner-expected-playwright.txt)"; fi \
-    && /usr/local/bin/verify-runner-image \
+COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
+RUN --network=none expected_playwright=none \
+    && if [[ "${BACKEND}" == web ]]; then expected_playwright="$(cat /opt/mesh-runner-verification/playwright-pin.txt)"; fi \
+    && bash /opt/mesh-runner-verification/verify-runner-candidate.sh \
+      --expected-directory /opt/mesh-runner-verification \
+      --verifier-revision "${VERIFIER_REVISION}" \
       public \
       "${BACKEND}" \
       "${MESH_LLM_REVISION}" \
       "${CUDA_SERIES}" \
       "${ROCM_VERSION}" \
       "${RUNNER_IMAGES_REVISION}" \
-      "$expected_playwright" \
-    && /__e/node24/bin/node -e 'console.log("node ok")'
+      "$expected_playwright" > /tmp/mesh-runner-identity.json \
+    && cat /tmp/mesh-runner-identity.json
 
 FROM selected-backend AS self-hosted
 
@@ -313,13 +317,19 @@ FROM self-hosted AS self-hosted-test
 ARG BACKEND
 ARG MESH_LLM_REVISION
 ARG RUNNER_IMAGES_REVISION
+ARG VERIFIER_REVISION
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
-RUN /usr/local/bin/verify-runner-image \
+COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
+RUN --network=none bash /opt/mesh-runner-verification/verify-runner-candidate.sh \
+      --expected-directory /opt/mesh-runner-verification \
+      --verifier-revision "${VERIFIER_REVISION}" \
       self-hosted \
       "${BACKEND}" \
       "${MESH_LLM_REVISION}" \
       "${CUDA_SERIES}" \
       "${ROCM_VERSION}" \
       "${RUNNER_IMAGES_REVISION}" \
-    && /__e/node24/bin/node -e 'console.log("node ok")'
+      none > /tmp/mesh-runner-identity.json \
+    && cat /tmp/mesh-runner-identity.json

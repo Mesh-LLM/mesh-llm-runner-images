@@ -34,8 +34,8 @@ if [[ "$backend" == web || "$backend" == browser ]]; then
   expected_playwright="$(cat "$repository_root/config/playwright-pin.txt")"
 fi
 mkdir -p "$evidence/expected"
-cp "$repository_root"/config/{tool-pins.json,cache-policy.json,python-requirements.lock} "$evidence/expected/"
-cp "$repository_root/scripts/collect-runner-identity.py" "$evidence/expected/"
+cp "$repository_root"/config/{playwright-pin.txt,tool-pins.json,cache-policy.json,python-requirements.lock} "$evidence/expected/"
+cp "$repository_root"/scripts/{verify-runner-candidate.sh,verify-runner-image.sh,collect-runner-identity.py} "$evidence/expected/"
 cat > "$evidence/container.sh" <<'CONTAINER'
 set -euo pipefail
 work="$(mktemp -d /tmp/runner-identity.XXXXXX)"
@@ -43,8 +43,7 @@ trap 'rm -rf "$work"' EXIT
 tar -xf - -C "$work"
 verifier="$1"
 shift
-verify-runner-image "$@" >&2
-python3 "$work/collect-runner-identity.py" --expected-directory "$work" --verifier-revision "$verifier" "$@"
+bash "$work/verify-runner-candidate.sh" --expected-directory "$work" --verifier-revision "$verifier" "$@"
 CONTAINER
 container_script="$(cat "$evidence/container.sh")"
 tar -C "$evidence/expected" -cf - . \

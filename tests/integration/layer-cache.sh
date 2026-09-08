@@ -43,6 +43,8 @@ for required_command in docker jq python3 git; do
   }
 done
 runner_images_revision="${RUNNER_IMAGES_REVISION:-$(git -C "$repository_root" rev-parse HEAD)}"
+verifier_revision="${VERIFIER_REVISION:-$(git -C "$repository_root" rev-parse HEAD)}"
+[[ "$verifier_revision" =~ ^[0-9a-f]{40}$ ]] || { echo "VERIFIER_REVISION must be a full lowercase Git SHA" >&2; exit 1; }
 [[ "$runner_images_revision" =~ ^[0-9a-f]{40}$ ]] || {
   echo "RUNNER_IMAGES_REVISION must be a full lowercase Git SHA" >&2
   exit 1
@@ -103,6 +105,7 @@ build_image() {
     --build-arg BACKEND="$backend" --build-arg RUNNER_ENVIRONMENT=public
     --build-arg CUDA_SERIES=none --build-arg ROCM_VERSION=none
     --build-arg MESH_LLM_REVISION="$revision"
+    --build-arg VERIFIER_REVISION="$verifier_revision"
     --build-arg RUNNER_IMAGES_REVISION="$runner_images_revision")
   if [[ -n "${ACTIONS_RUNNER_BASE_IMAGE:-}" ]]; then
     arguments+=(--build-arg ACTIONS_RUNNER_BASE_IMAGE="$ACTIONS_RUNNER_BASE_IMAGE")

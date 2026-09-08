@@ -113,6 +113,13 @@ def save_oci_config(directory, phase):
 
 
 class CacheTests(unittest.TestCase):
+    def test_shared_verification_wrapper_is_a_real_public_test_step(self):
+        text = build_log("baseline").replace("RUN verify-runner-image public args",
+            "RUN --network=none bash /opt/mesh-runner-verification/verify-runner-candidate.sh args")
+        self.assertEqual(module.parse_steps(text, "baseline")["verify"]["status"], "DONE")
+        with self.assertRaises(ValueError):
+            module.parse_steps(text.replace("RUN --network=none bash", "COPY --network=none bash"), "baseline")
+
     def test_completed_step_boundaries(self):
         for phase in ("baseline", "unrelated-change", "ui-config-change", "ui-switch"):
             with self.subTest(phase=phase):

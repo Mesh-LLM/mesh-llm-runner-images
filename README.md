@@ -126,6 +126,11 @@ docker run --rm --entrypoint verify-runner-image mesh-llm-runner:public public c
 
 Use target `self-hosted` and `RUNNER_ENVIRONMENT=self-hosted` for an image that includes the GitHub Actions runner. Select `BACKEND=cpu|vulkan|cuda|rocm|web`; CUDA additionally accepts `CUDA_SERIES`, while ROCm accepts `ROCM_VERSION` and currently requires AMD64. For lean images, select `--file Dockerfile.ui`, `--platform linux/amd64`, `--target public-test`, and `BACKEND=ui` or `BACKEND=browser`.
 
+Test targets also require `--build-arg VERIFIER_REVISION="$(git rev-parse HEAD)"`.
+They use the same independent tool/dependency checks as staged verification,
+with networking disabled. The verifier revision identifies the checkout
+performing the check and remains separate from both image source revisions.
+
 ## Maintenance pipeline
 
 `.github/workflows/build-and-push.yml` runs on pull requests, pushes to `main`, a weekly schedule, and manual dispatch. It:

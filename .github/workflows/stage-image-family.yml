@@ -154,6 +154,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate catalog build selection
+        id: selection
         shell: bash
         env:
           ENVIRONMENT: ${{ inputs.environment }}
@@ -164,8 +165,10 @@ jobs:
           ARCHITECTURES: ${{ inputs.architectures }}
           DOCKERFILE: ${{ inputs.dockerfile }}
         run: |
+          set -euo pipefail
           scripts/validate-family-selection.sh "$ENVIRONMENT" "$BACKEND_ID" \
             "$BACKEND_NAME" "$CUDA_SERIES" "$ROCM_VERSION" "$ARCHITECTURES" "$DOCKERFILE"
+          echo "verifier_revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Download manifest bundles
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -284,6 +287,7 @@ jobs:
             RUNNER_ENVIRONMENT=${{ inputs.environment }}
             MESH_LLM_REVISION=${{ inputs.mesh_revision }}
             RUNNER_IMAGES_REVISION=${{ inputs.runner_images_revision }}
+            VERIFIER_REVISION=${{ steps.selection.outputs.verifier_revision }}
             CUDA_SERIES=${{ inputs.cuda_series }}
             ROCM_VERSION=${{ inputs.rocm_version }}
           provenance: ${{ inputs.execution_mode != 'validate' && 'mode=max' || 'false' }}
@@ -513,6 +517,7 @@ jobs:
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           CANDIDATE_DESCRIPTOR: ${{ steps.candidate.outputs.descriptor }}
+          VERIFIER_REVISION: ${{ steps.selection.outputs.verifier_revision }}
           PLATFORM: ${{ matrix.platform }}
           ENVIRONMENT: ${{ inputs.environment }}
           BACKEND_NAME: ${{ inputs.backend_name }}
@@ -522,7 +527,7 @@ jobs:
           RUNNER_IMAGES_REVISION: ${{ inputs.runner_images_revision }}
         run: |
           set -euo pipefail
-          verifier_revision="$(git rev-parse HEAD)"
+          verifier_revision="$VERIFIER_REVISION"
           identity_directory="$RUNNER_TEMP/runner-identity"
           mkdir -p "$identity_directory"
           depot build \

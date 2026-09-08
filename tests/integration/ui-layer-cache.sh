@@ -50,6 +50,8 @@ for required_command in docker jq python3 git ssh; do
   command -v "$required_command" >/dev/null || { echo "missing required command: $required_command" >&2; exit 1; }
 done
 runner_images_revision="${RUNNER_IMAGES_REVISION:-$(git -C "$repository_root" rev-parse HEAD)}"
+verifier_revision="${VERIFIER_REVISION:-$(git -C "$repository_root" rev-parse HEAD)}"
+[[ "$verifier_revision" =~ ^[0-9a-f]{40}$ ]] || { echo "VERIFIER_REVISION must be a full lowercase Git SHA" >&2; exit 1; }
 if [[ -n "$log_root" ]]; then
   mkdir -p "$log_root"
   proof_directory="$(mktemp -d "$log_root/ui-layer-cache.XXXXXX")"
@@ -126,6 +128,7 @@ build_image() {
     --target public-test --tag "$image" --file "$context/Dockerfile.ui"
     --build-arg BACKEND="$backend" --build-arg RUNNER_ENVIRONMENT=public
     --build-arg CUDA_SERIES=none --build-arg ROCM_VERSION=none
+    --build-arg VERIFIER_REVISION="$verifier_revision"
     --build-arg MESH_LLM_REVISION="$revision" --build-arg RUNNER_IMAGES_REVISION="$runner_images_revision")
   if [[ -n "${ACTIONS_RUNNER_BASE_IMAGE:-}" ]]; then
     arguments+=(--build-arg ACTIONS_RUNNER_BASE_IMAGE="$ACTIONS_RUNNER_BASE_IMAGE")

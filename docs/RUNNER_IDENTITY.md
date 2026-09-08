@@ -11,6 +11,13 @@ copied into a separate directory so they cannot overwrite the candidate's
 stamps or lock before comparison. The receipt records the verification revision
 separately from the source revisions stamped into the candidate.
 
+Full public/self-hosted test targets, lean public test targets and staged
+verification all call `verify-runner-candidate.sh`. It invokes the verifier and
+collector from that independent directory, executes both canonical and Actions
+Node 20/24 paths, and emits the runtime report only after success. All four
+Dockerfile callers use `RUN --network=none`; production image instructions are
+unchanged. Test targets require an explicit `VERIFIER_REVISION` build argument.
+
 `collect-runner-identity.py` observes Node version/ABI, pnpm version/store format,
 just, Rust commit/host/LLVM, Cargo, sccache, OpenAI npm, Playwright/Chromium, and
 Python version/ABI/package inventory where applicable. Full images must match
@@ -61,3 +68,19 @@ to metadata read through the host's containerd socket. The evidence includes
 copies of the exact collector and expected files used. The result explicitly
 states that hosted workflow execution and registry publication were not
 qualified. It does not rebuild or publish an image.
+
+`tests/integration/verification-parity.sh` takes the same arguments and also
+executes `Dockerfile.verify` against the retained `name:tag@digest` using the
+native Docker driver. It extracts the exact PR test block and runs its unchanged
+COPY/RUN instructions atop that same production image, exports both runtime
+reports, and compares them with the offline baseline. It verifies an uncached
+RUN, rejection of a wrong source SHA without an exported receipt, immutable
+production image identity and captured input hashes. This tests the verification
+paths without rebuilding the production image. It does not qualify hosted Depot
+execution, registry publication, or another architecture/backend.
+
+The deployment smoke helper, `scripts/verify-end-to-end.sh`, resolves each alias
+once and runs all its architectures on that immutable digest with networking
+disabled. Optional `--mesh-revision SHA` and `--runner-images-revision SHA` add
+independent source expectations. It retains the embedded image verifier and
+does not emit a qualified identity receipt.

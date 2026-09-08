@@ -9,7 +9,7 @@ Complete the remaining runner-image optimizations from the revised audit in
 `/Users/ndizazzo/dev/mesh/worktrees/runner-image-improvements`, branch
 `codex/runner-image-improvements`. Work in stages and require focused tests,
 appropriate real image checks, and independent review before advancing.
-Stages 1–5 are complete; continue with PR/staging verification parity. Coordinate tests and consumer integration
+Stages 1–6 are complete; continue with retained-cohort promotion and publication serialization. Coordinate tests and consumer integration
 with task `01a07dce-676e-7640-9715-cf40b62790dc`, preserve its release changes and
 frozen worktrees, and wait for any changes that invalidate a test's inputs.
 Keep AMD64 CUDA compilation on the existing desk k3s ARC runner. Complete only
@@ -228,6 +228,45 @@ disabled, retain existing backend compilation and Chromium checks. Strengthen
 end-to-end alias resolution to immutable digests separately. No next-stage
 implementation can now begin.
 
+## Stage 6 verification parity complete
+
+All PR test targets and `Dockerfile.verify` now use one independent verification
+wrapper, seven explicit expectations and a separate verifier-checkout SHA. The
+wrapper executes the checkout's verifier/collector, validates Node 20/24 at both
+canonical and Actions paths, and emits a report only on success. Verification
+RUNs have networking disabled. Production Dockerfile instructions are unchanged.
+The end-to-end deployment smoke resolves each alias once to an immutable digest,
+keeps the mixed self-hosted child mapping, and accepts optional explicit source
+expectations. It remains a smoke check, not receipt admission.
+
+All 24 host suites, complete shell lint, actionlint and diff checks pass. The
+wrapper suite has 15 cases, including execution of all catalog families through
+the actual Dockerfile caller commands; the UI cache parser has 13 cases. Both
+cache build helpers pass a separate verifier revision, and retained pre-wrapper
+logs remain replayable with the same completion requirements.
+
+Native AMD64 proofs under `/tmp/mesh-runner-stage6-complete-parity`:
+
+- `verification-parity.Rnif8D`: browser on the Stage 4 image.
+- `verification-parity.lhjOOU`: public CPU on the Stage 3 image.
+- `verification-parity.ZgRkr4`: self-hosted CPU as runner on the Stage 3 image.
+
+Each executes the real `Dockerfile.verify` scratch export against an exact local
+name:tag@digest. It also executes the extracted, unchanged PR test COPY/RUN block
+over the same production image. Both reports equal the independent offline
+wrapper report and bind to the retained OCI metadata. Wrong source expectations
+fail with no exported receipt. Input snapshots, raw logs, uncached RUN checks,
+unchanged production image identities and current binder replay pass. These are
+development proofs, not full production rebuilds or hosted/registry qualification.
+The complete host log is `/tmp/mesh-runner-stage6-contracts-final.log`.
+
+The companion task independently reviewed the Stage 6 Dockerfiles/workflow,
+wrapper, native proof helper and end-to-end helper without findings, and reran
+focused wrapper/end-to-end suites, actionlint and ShellCheck. Root reviewed the
+delegated implementations and replayed all three native receipts. Review agents
+subsequently exhausted account usage; do not assume they are still running.
+Both Docker slots are free again; coordinate the next use.
+
 ## Remaining supplemental work
 
 - Adopt qualified immutable UI/browser digests once available. Initial lean
@@ -242,8 +281,10 @@ implementation can now begin.
   cold. Keep the protected `ci/slices.yml` and `ci/ownership.yml` bytes unchanged
   in the initial metadata landing. Historical image provenance remains unknown
   until verified; do not infer it from this runner repository's current HEAD.
-- Complete PR/staging verification parity, per-browser compatibility, backend
-  coverage, and representative Actions runtime checks.
+- Qualify the final hosted build/staging path and representative remaining
+  backend/architecture checks before production rollout. Stage 6 proves the
+  shared local verification paths and Actions Node runtime paths; it does not
+  substitute for a hosted canary or a native CUDA/ROCm build.
 - Promote a retained, verified staged cohort without rebuilding. Bind admission
   to repository, trusted source workflow/ref/event, exact successful run attempt,
   artifact ID, complete descriptors, original source SHAs, and current catalog.

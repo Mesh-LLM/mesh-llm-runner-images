@@ -5,17 +5,46 @@ image="${IMAGE:-ghcr.io/mesh-llm/mesh-llm-cuda-runner}"
 public_tag="${PUBLIC_TAG:-public-latest}"
 self_hosted_tag="${SELF_HOSTED_TAG:-self-hosted-latest}"
 all_backends=false
+expected_mesh_revision=
+expected_runner_images_revision=
+resolved_aliases='{}'
+resolved_reference=
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for argument in "$@"; do
-  case "$argument" in
-    --all-backends) all_backends=true ;;
-    *) echo "unknown argument: $argument" >&2; exit 2 ;;
+while (( $# > 0 )); do
+  case "$1" in
+    --all-backends) all_backends=true; shift ;;
+    --mesh-revision|--runner-images-revision)
+      [[ "${2:-}" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "$1 requires a full lowercase git SHA" >&2
+        exit 2
+      }
+      if [[ "$1" == --mesh-revision ]]; then expected_mesh_revision="$2"
+      else expected_runner_images_revision="$2"; fi
+      shift 2
+      ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 require_command() {
   command -v "$1" >/dev/null || { echo "missing required command: $1" >&2; exit 1; }
+}
+
+resolve_alias() {
+  local alias_reference="$1" digest manifest
+  digest="$(jq -r --arg reference "$alias_reference" '.[$reference] // empty' <<< "$resolved_aliases")"
+  if [[ -z "$digest" ]]; then
+    manifest="$(docker buildx imagetools inspect "$alias_reference" --format '{{json .Manifest}}')"
+    digest="$(jq -er '.digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest")"
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+      echo "registry returned no single valid digest for $alias_reference" >&2
+      exit 1
+    }
+    resolved_aliases="$(jq --arg reference "$alias_reference" --arg digest "$digest" \
+      '.[$reference] = $digest' <<< "$resolved_aliases")"
+  fi
+  resolved_reference="$image@$digest"
 }
 
 verify_manifest_list() {
@@ -39,8 +68,10 @@ verify_local_execution() {
   local playwright_version="$6"
   shift 6
   for architecture in "$@"; do
-    docker run --rm --platform "linux/$architecture" --entrypoint /usr/local/bin/verify-runner-image \
-      "$reference" "$environment" "$backend" "" "$cuda_series" "$rocm_version" "" "$playwright_version"
+    # The daemon may pull this exact digest; the verification process is offline.
+    docker run --rm --pull=missing --network none --platform "linux/$architecture" --entrypoint /usr/local/bin/verify-runner-image \
+      "$reference" "$environment" "$backend" "$expected_mesh_revision" "$cuda_series" "$rocm_version" \
+      "$expected_runner_images_revision" "$playwright_version"
   done
 }
 
@@ -52,7 +83,8 @@ verify_image() {
   local rocm_version="$5"
   local playwright_version="$6"
   shift 6
-  local reference="$image:$tag"
+  resolve_alias "$image:$tag"
+  local reference="$resolved_reference"
   verify_manifest_list "$reference" "$@"
   verify_local_execution "$reference" "$environment" "$backend" "$cuda_series" "$rocm_version" "$playwright_version" "$@"
 }
@@ -74,10 +106,12 @@ playwright_version="$(cat "$repository_root/config/playwright-pin.txt")"
 }
 
 verify_image "$public_tag" public cpu none none none amd64 arm64
-verify_manifest_list "$image:$self_hosted_tag" amd64 arm64
+resolve_alias "$image:$self_hosted_tag"
+self_hosted_reference="$resolved_reference"
+verify_manifest_list "$self_hosted_reference" amd64 arm64
 # The mixed compatibility index intentionally combines CUDA12 AMD64 and CPU ARM64.
-verify_local_execution "$image:$self_hosted_tag" self-hosted cuda "$cuda12_series" none none amd64
-verify_local_execution "$image:$self_hosted_tag" self-hosted cpu none none none arm64
+verify_local_execution "$self_hosted_reference" self-hosted cuda "$cuda12_series" none none amd64
+verify_local_execution "$self_hosted_reference" self-hosted cpu none none none arm64
 
 if [[ "$all_backends" == true ]]; then
   while IFS=$'\t' read -r environment backend_id backend cuda_series rocm_version architecture_list; do

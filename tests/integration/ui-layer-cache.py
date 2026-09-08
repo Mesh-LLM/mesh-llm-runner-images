@@ -184,8 +184,9 @@ def parse_steps(log, phase):
         step["status"] = next(iter(statuses[step["id"]]))
 
     def one(name, stage, operation, text):
+        fragments = (text,) if isinstance(text, str) else text
         matches = [step for step in steps.values() if step["stage"] == stage
-                   and step["operation"] == operation and text in step["command"]]
+                   and step["operation"] == operation and any(fragment in step["command"] for fragment in fragments)]
         if len(matches) != 1:
             raise ValueError(f"expected exactly one {name} step, found {len(matches)}")
         return matches[0]
@@ -194,7 +195,10 @@ def parse_steps(log, phase):
     subset = one("UI input filtering", "ui-inputs", "RUN", "prepare-ui-dependencies /tmp/manifest-inputs /ui-manifests")
     one("UI tool installation", "ui-tools", "RUN", "/usr/local/bin/install-ui-tools")
     one("UI package installation", "ui-tools", "RUN", "apt-get install")
-    verify = one("public-test verification", "public-test", "RUN", "verify-runner-image public")
+    # Keep retained pre-wrapper evidence replayable; both forms identify one
+    # completed public-test RUN, never a helper COPY or an unexecuted command.
+    verify = one("public-test verification", "public-test", "RUN",
+                 ("verify-runner-image public", "bash /opt/mesh-runner-verification/verify-runner-candidate.sh"))
     copies = [one(path, "public", "COPY", f"--link --chown=1001:123 --from=ui-dependencies {path} {path}")
               for path in DEPENDENCY_PATHS]
     browser = None if phase == "ui-switch" else one("browser installation", "backend-browser", "RUN", "install-playwright /tmp/playwright-pin.txt")
