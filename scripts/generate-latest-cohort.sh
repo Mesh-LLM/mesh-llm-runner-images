@@ -100,7 +100,7 @@ inspect_optional_digest() {
 }
 
 jq -er '
-    if (type == "object" and keys == ["include"] and (.include | type == "array" and length > 0) and all(.include[]; type == "object" and (keys | sort) == (["environment", "backend_id", "backend_name", "cuda_series", "rocm_version", "architectures", "artifact", "tag_stem", "compatibility_tag_stem"] | sort) and all(.[]; type == "string" and (test("[\\t\\r\\n]") | not)))) then .include[] else error("invalid promotion matrix") end
+    if (type == "object" and keys == ["include"] and (.include | type == "array" and length > 0) and all(.include[]; type == "object" and (keys | sort) == (["environment", "backend_id", "backend_name", "cuda_series", "rocm_version", "architectures", "artifact", "tag_stem", "compatibility_tag_stem"] | sort) and all(.[]; type == "string" and (test("[\\t\\r\\n]") | not)) and all(to_entries[]; .key == "compatibility_tag_stem" or (.value | length > 0)))) then .include[] else error("invalid promotion matrix") end
     | [
         .environment,
         .backend_id,

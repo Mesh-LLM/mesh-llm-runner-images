@@ -33,7 +33,11 @@ def normalize(name):
 
 expected = {}
 for line in lock.decode().splitlines():
-    name, version = line.split('==')
+    if not line.strip() or line.startswith('#'):
+        continue
+    match = re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9_.-]*)==([A-Za-z0-9][A-Za-z0-9._+!-]*)', line)
+    assert match is not None, f'lock must contain exact package pins: {line}'
+    name, version = match.groups()
     key = normalize(name)
     assert key not in expected, f'duplicate lock entry: {name}'
     expected[key] = version

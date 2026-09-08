@@ -50,3 +50,57 @@ expect_rejected
 printf '%s\n' "--find-links $temporary" 'mesh-lock-fixture==2.0.0' > "$requirements"
 expect_rejected
 echo 'Frozen Python requirements compatibility checks passed'
+
+# Unsupported pip must fail before invoking its resolver, with a useful error.
+cat > "$temporary/mock-pip" <<'PIP'
+#!/usr/bin/env bash
+set -eu
+if [[ "$1" == --version ]]; then
+  printf 'pip %s from fixture\n' "$MOCK_PIP_VERSION"
+  exit 0
+fi
+touch "$MOCK_PIP_INSTALL_LOG"
+while (( $# )); do
+  if [[ "$1" == --report ]]; then
+    printf '{"install":[]}\n' > "$2"
+    exit 0
+  fi
+  shift
+done
+exit 1
+PIP
+chmod +x "$temporary/mock-pip"
+export MOCK_PIP_INSTALL_LOG="$temporary/mock-install.log"
+for version in 21.3 22.1 invalid; do
+  if MOCK_PIP_VERSION="$version" "$BASH" "$verifier" "$temporary/mock-pip" "$requirements" > "$temporary/old-pip.log" 2>&1; then
+    echo 'unsupported pip unexpectedly passed' >&2
+    exit 1
+  fi
+  grep -Fq 'needs pip 22.2 or newer' "$temporary/old-pip.log"
+  test ! -e "$MOCK_PIP_INSTALL_LOG"
+done
+for version in 22.2 23.0; do
+  MOCK_PIP_VERSION="$version" "$BASH" "$verifier" "$temporary/mock-pip" "$requirements"
+  test -f "$MOCK_PIP_INSTALL_LOG"
+done
+
+# Execute the runtime proof's actual parser without needing a Docker image.
+python3 - "$repository_root/tests/integration/python-lock.sh" <<'PY'
+import pathlib
+import re
+import sys
+source = pathlib.Path(sys.argv[1]).read_text()
+parser = source[source.index('expected = {}'):source.index('installed = {}')]
+def parse(lock):
+    namespace = {'lock': lock.encode(), 're': re, 'normalize': lambda name: re.sub(r'[-_.]+', '-', name).lower()}
+    exec(parser, namespace)
+    return namespace['expected']
+assert parse('# comment\n\nmesh_fixture==1.0.0\n  \n') == {'mesh-fixture': '1.0.0'}
+for invalid in ['mesh>=1.0\n', 'mesh==\n', 'mesh_fixture==1.0\nmesh-fixture==1.0\n']:
+    try:
+        parse(invalid)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f'invalid lock accepted: {invalid}')
+PY

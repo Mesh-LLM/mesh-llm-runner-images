@@ -223,12 +223,17 @@ printf '{}\n' > "$temporary_directory/repo/config/runner-image-families.json"
 expect_failure bash "$verifier" --all-backends
 test ! -s "$MOCK_DOCKER_LOG"
 
+cp "$repository_root/config/runner-image-families.json" \
+  "$temporary_directory/repo/config/runner-image-families.json"
+export MOCK_GENERATOR_LOG="$temporary_directory/generator.log"
 cat > "$temporary_directory/repo/scripts/generate-workflow-matrices.sh" <<'GENERATOR'
 #!/usr/bin/env bash
+touch "$MOCK_GENERATOR_LOG"
 printf '{"family_matrix":{"include":[]}}\n'
 exit 7
 GENERATOR
 expect_failure bash "$verifier" --all-backends
+test -f "$MOCK_GENERATOR_LOG"
 test ! -s "$MOCK_DOCKER_LOG"
 
 echo "catalog-driven end-to-end verification passed"

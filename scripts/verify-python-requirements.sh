@@ -7,6 +7,12 @@ set -euo pipefail
 }
 pip_binary="$1"
 requirements="$2"
+pip_version="$("$pip_binary" --version)"
+if [[ ! "$pip_version" =~ ^pip\ ([0-9]+)\.([0-9]+) ]] \
+  || (( 10#${BASH_REMATCH[1]} < 22 || (10#${BASH_REMATCH[1]} == 22 && 10#${BASH_REMATCH[2]} < 2) )); then
+  echo "Python requirement verification needs pip 22.2 or newer for --report; found: $pip_version" >&2
+  exit 1
+fi
 report="$(mktemp)"
 trap 'rm -f "$report"' EXIT
 

@@ -103,7 +103,7 @@ def compare(proof_directory):
         history = [json.loads(line) for line in
                    (proof_directory / f"{phase}-history.jsonl").read_text().splitlines()]
         exports = re.findall(
-            r"^#\d+ exporting (?:config|manifest|manifest list) (sha256:[0-9a-f]{64}) done$",
+            r"^#\d+ exporting (?:config|manifest|manifest list) (sha256:[0-9a-f]{64}) (?:[0-9.]+s )?done$",
             (proof_directory / f"{phase}.log").read_text(), re.MULTILINE,
         )
         if inspect["Id"] not in exports:

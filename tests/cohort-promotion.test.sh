@@ -40,6 +40,20 @@ expect_failure() {
 }
 
 generation_log="$temporary_directory/generate.log"
+# The final compatibility tag is optional; every earlier TSV field is required.
+for field in environment backend_id backend_name cuda_series rocm_version architectures artifact tag_stem; do
+  jq --arg field "$field" '.include[0][$field] = ""' "$temporary_directory/matrix.json" > "$temporary_directory/empty.json"
+  if MOCK_DOCKER_LOG="$temporary_directory/empty.log" DOCKER_BIN="$mock_docker" \
+    bash "$generator" --descriptors "$descriptor_directory" --matrix "$temporary_directory/empty.json" \
+      --image "$image" --timestamp "$timestamp" --mesh-revision "$mesh_revision" \
+      --runner-images-revision "$runner_images_revision" --output "$temporary_directory/empty-cohort.json" \
+      > "$temporary_directory/empty-error.log" 2>&1; then
+    echo "empty required matrix field passed: $field" >&2
+    exit 1
+  fi
+  grep -Fq 'invalid promotion matrix' "$temporary_directory/empty-error.log"
+  test ! -s "$temporary_directory/empty.log"
+done
 MOCK_DOCKER_LOG="$generation_log" \
 MOCK_DOCKER_SOURCE_DIGEST="$digest" \
 DOCKER_BIN="$mock_docker" \

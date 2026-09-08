@@ -75,6 +75,9 @@ class HistoryTests(unittest.TestCase):
                 (directory / f"{phase}.log").write_text(f"#35 exporting manifest list {inspect['Id']} done\n")
             with contextlib.redirect_stdout(io.StringIO()):
                 module.compare(directory)
+            (directory / "cpu-switch.log").write_text(f"#35 exporting config {inspect['Id']} 0.0s done\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                module.compare(directory)
             good_inspect = copy.deepcopy(inspect)
             inspect["RootFS"]["Layers"][3] = "sha256:" + "f" * 64
             (directory / "cpu-switch-inspect.json").write_text(json.dumps([inspect]))
