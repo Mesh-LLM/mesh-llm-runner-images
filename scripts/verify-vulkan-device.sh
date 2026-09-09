@@ -29,11 +29,15 @@ command -v vulkaninfo >/dev/null || {
 verification_directory="$(mktemp -d)"
 trap 'rm -rf "$verification_directory"' EXIT
 summary="$verification_directory/vulkan-summary.txt"
+devices="$verification_directory/nvidia-devices.txt"
 
-nvidia-smi -L >/dev/null || {
+# `nvidia-smi -L` reports success on some driver builds even when it lists no
+# device, so the enumerated output itself is what proves NVML sees a GPU.
+if ! nvidia-smi -L >"$devices" 2>&1 || ! grep -Eq '^GPU [0-9]+:' "$devices"; then
+  cat "$devices" >&2
   echo "nvidia-smi could not enumerate an NVIDIA device" >&2
   exit 1
-}
+fi
 
 if ! vulkaninfo --summary >"$summary" 2>&1; then
   cat "$summary" >&2

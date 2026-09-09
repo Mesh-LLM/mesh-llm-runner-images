@@ -65,6 +65,25 @@ expect_failure \
   env PATH="$mock_bin:$PATH" MESH_RUNNER_BACKEND=vulkan \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility bash "$verifier"
 
+cat > "$mock_bin/nvidia-smi" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${1:-}" == -L ]]
+printf '%s\n' 'No devices were found'
+MOCK
+chmod 0755 "$mock_bin/nvidia-smi"
+
+expect_failure \
+  'nvidia-smi could not enumerate an NVIDIA device' \
+  env PATH="$mock_bin:$PATH" MESH_RUNNER_BACKEND=vulkan \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics bash "$verifier"
+
+cat > "$mock_bin/nvidia-smi" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${1:-}" == -L ]]
+printf '%s\n' 'GPU 0: NVIDIA Test GPU (UUID: GPU-test)'
+MOCK
+chmod 0755 "$mock_bin/nvidia-smi"
+
 cat > "$mock_bin/vulkaninfo" <<'MOCK'
 #!/usr/bin/env bash
 [[ "${1:-}" == --summary ]]
