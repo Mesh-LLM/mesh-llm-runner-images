@@ -2,4 +2,6 @@
 schema: 1
 profile: cuda
 apt:
-  packages: []
+  packages:
+    - libvulkan1
+    - vulkan-tools

@@ -124,6 +124,14 @@ FROM toolchain AS backend-cpu
 
 FROM toolchain AS backend-vulkan
 
+# NVIDIA Container Toolkit defaults to compute,utility. Graphics is additionally
+# required for it to inject the Vulkan ICD and driver libraries.
+USER root
+COPY scripts/verify-vulkan-device.sh /usr/local/bin/verify-vulkan-device
+RUN chmod 0755 /usr/local/bin/verify-vulkan-device
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+USER runner
+
 FROM toolchain AS backend-cuda
 
 USER root
@@ -131,15 +139,17 @@ ARG TARGETARCH
 ARG INSTALL_CUDA=1
 ARG CUDA_SERIES=12-9
 COPY scripts/install-cuda-toolchain.sh /usr/local/bin/install-cuda-toolchain
+COPY scripts/verify-vulkan-device.sh /usr/local/bin/verify-vulkan-device
 RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-cuda${CUDA_SERIES}-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=mesh-runner-apt-archives-ubuntu24-cuda${CUDA_SERIES}-${TARGETARCH},target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=mesh-runner-tool-downloads-ubuntu24-${TARGETARCH},target=/var/cache/mesh-downloads,sharing=locked \
-    chmod 0755 /usr/local/bin/install-cuda-toolchain \
+    chmod 0755 /usr/local/bin/install-cuda-toolchain /usr/local/bin/verify-vulkan-device \
     && TARGETARCH="${TARGETARCH}" INSTALL_CUDA="${INSTALL_CUDA}" CUDA_SERIES="${CUDA_SERIES}" \
        /usr/local/bin/install-cuda-toolchain
 ENV CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 USER runner
 
 FROM toolchain AS backend-rocm
