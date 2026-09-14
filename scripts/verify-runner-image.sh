@@ -124,11 +124,18 @@ case "$actual_backend" in
     done
     required_commands=(bash docker git jq just node npm pnpm python3 tar gzip unzip xz zip zstd)
     ;;
-  *) required_commands=(cargo cmake docker git jq just lld node ninja npm pnpm python rustc sccache) ;;
+  *) required_commands=(cargo cc cmake docker git jq just lld mold node ninja npm pnpm python readelf rustc sccache) ;;
 esac
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null || { echo "missing command: $command_name" >&2; exit 1; }
 done
+
+if [[ "$lean_backend" == false ]]; then
+  printf '%s\n' 'int main(void) { return 0; }' \
+    | cc -x c -fuse-ld=mold -o "$verification_directory/mold-probe" -
+  readelf -p .comment "$verification_directory/mold-probe" | grep -Fq mold \
+    || { echo "mold linked the probe but did not identify the output" >&2; exit 1; }
+fi
 
 if [[ "$lean_backend" == true ]]; then
   [[ "$(cat /etc/mesh-runner-node-major)" == 24 ]]

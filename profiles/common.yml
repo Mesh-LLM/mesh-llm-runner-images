@@ -18,6 +18,7 @@ apt:
     - libssl-dev
     - lld
     - lsof
+    - mold
     - ninja-build
     - patchelf
     - pkg-config
