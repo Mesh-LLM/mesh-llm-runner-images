@@ -51,6 +51,14 @@ uname() { printf '%s\n' "${FIXTURE_ARCH:-x86_64}"; }
 id() { if [[ "$1" == -u ]]; then echo 0; else echo runner; fi; }
 docker() { echo 'Docker version fixture'; }
 cargo() { echo 'cargo fixture'; }
+cc() {
+  local output=""
+  while (($# > 0)); do
+    if [[ "$1" == -o ]]; then output="$2"; shift 2; else shift; fi
+  done
+  : > "$output"
+}
+readelf() { echo 'String dump of section .comment: mold fixture'; }
 pnpm() { printf '%s\n' "${FIXTURE_PNPM_VERSION:-10.34.5}"; }
 node() {
   printf 'node:%s\n' "$*" >> "$FIXTURE_LOG"
@@ -126,11 +134,12 @@ export FIXTURE_FULL=true
 : > "$FIXTURE_LOG"
 verify public cpu "$mesh_revision" none none "$runner_revision" none > "$temporary_directory/cpu-output"
 grep -q '"cargo": "cargo fixture"' "$temporary_directory/cpu-output"
-for full_command in cargo cmake docker git jq just lld node ninja npm pnpm python rustc sccache; do
+for full_command in cargo cc cmake docker git jq just lld mold node ninja npm pnpm python readelf rustc sccache; do
   grep -qx "required:$full_command" "$FIXTURE_LOG"
 done
 grep -q '^import langchain_openai' "$FIXTURE_LOG"
 expect_failure env FIXTURE_MISSING_COMMAND=cargo bash "$temporary_directory/verifier.sh" public cpu
+expect_failure env FIXTURE_MISSING_COMMAND=mold bash "$temporary_directory/verifier.sh" public cpu
 printf 'web\n' > "$FIXTURE_ROOT/etc/mesh-runner-backend"
 printf '1.62.1\n' > "$FIXTURE_ROOT/etc/mesh-runner-playwright-version"
 export PLAYWRIGHT_BROWSERS_PATH="$FIXTURE_ROOT/opt/ms-playwright"
