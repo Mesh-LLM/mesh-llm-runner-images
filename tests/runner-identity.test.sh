@@ -27,7 +27,7 @@ def write(path, content):
     path.write_text(content)
 
 
-def fixture(root, backend="cpu", source=SOURCE):
+def fixture(root, backend="cpu", source=SOURCE, ui_path="crates/mesh-llm-ui"):
     expected_dir = root / "trusted"
     expected_dir.mkdir()
     for name in ("tool-pins.json", "cache-policy.json"):
@@ -46,7 +46,7 @@ def fixture(root, backend="cpu", source=SOURCE):
     for name, value in stamps.items():
         write(root / "etc" / name, value + "\n")
     manifests = root / "opt/mesh-llm/manifests"
-    files = {"crates/mesh-llm-ui/package.json": "{}\n", "crates/mesh-llm-ui/pnpm-lock.yaml": "lockfileVersion: 9\n"}
+    files = {ui_path + "/package.json": "{}\n", ui_path + "/pnpm-lock.yaml": "lockfileVersion: 9\n"}
     if backend not in {"ui", "browser"}:
         files["Cargo.toml"] = "[workspace]\n"
         (root / "opt/mesh-llm/venv").mkdir(parents=True)
@@ -89,6 +89,31 @@ def collect(root, expected_dir, expected, observer=observe):
 
 
 class IdentityTests(unittest.TestCase):
+    def test_relocated_ui_paths_retain_source_audit_and_store_admission(self):
+        for backend in ("cpu", "ui", "browser", "web"):
+            with self.subTest(backend=backend), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                directory, expected = fixture(root, backend, ui_path="mesh/crates/mesh-llm-ui")
+                receipt = collect(root, directory, expected)
+                self.assertEqual(receipt["tools"]["pnpm"]["store_format"], "v10")
+                (root / "home/runner/.local/share/pnpm/store/v10").rmdir()
+                with self.assertRaisesRegex(ValueError, "unexpected pnpm store layout"):
+                    collect(root, directory, expected)
+
+    def test_both_ui_layouts_are_rejected_without_selecting_one_silently(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory, expected = fixture(root)
+            manifests = root / "opt/mesh-llm/manifests"
+            index = json.loads((manifests / "dependency-index.json").read_text())
+            for name, data in (("package.json", "{}\n"), ("pnpm-lock.yaml", "lockfileVersion: 9\n")):
+                path = "mesh/crates/mesh-llm-ui/" + name
+                write(manifests / path, data)
+                index["files"].append({"path": path, "sha256": hashlib.sha256(data.encode()).hexdigest()})
+            write(manifests / "dependency-index.json", json.dumps(index))
+            with self.assertRaisesRegex(ValueError, "exactly one UI dependency source layout"):
+                collect(root, directory, expected)
+
     def test_full_and_lean_observations(self):
         for backend in ("cpu", "ui", "browser", "web"):
             with self.subTest(backend=backend), tempfile.TemporaryDirectory() as temporary:
