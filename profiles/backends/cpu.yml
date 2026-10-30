@@ -2,4 +2,12 @@
 schema: 1
 profile: cpu
 apt:
-  packages: []
+  packages:
+    - clang-19
+    - clang-format-19
+    - clang-tidy-19
+    - g++-14
+    - libclang-19-dev
+    - libclang-rt-19-dev
+    - llvm-19-dev
+    - llvm-19-tools

@@ -178,7 +178,12 @@ case "$actual_environment" in
 esac
 
 case "$actual_backend" in
-  cpu) ;;
+  cpu)
+    command -v verify-cpu-cpp-toolchain >/dev/null
+    # Use the co-located reviewed source in independent verification contexts,
+    # rather than substituting the candidate image's installed helper.
+    bash "$(dirname "${BASH_SOURCE[0]}")/verify-cpu-cpp-toolchain.sh"
+    ;;
   ui)
     [[ "$actual_playwright_version" == none ]]
     [[ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]

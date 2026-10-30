@@ -27,7 +27,7 @@ class VerificationParityTests(unittest.TestCase):
                     source = (repository / filename).read_text()
                     blocks = re.split(r"(?=^FROM )", source, flags=re.M)
                     block = next(block for block in blocks if block.splitlines()[0].endswith(" AS " + target))
-                    for name in ("verify-runner-candidate.sh", "verify-runner-image.sh", "collect-runner-identity.py",
+                    for name in ("verify-runner-candidate.sh", "verify-runner-image.sh", "verify-cpu-cpp-toolchain.sh", "collect-runner-identity.py",
                                  "tool-pins.json", "cache-policy.json", "python-requirements.lock", "playwright-pin.txt"):
                         self.assertTrue(any(name in line and line.endswith(" /opt/mesh-runner-verification/")
                                             for line in block.splitlines() if line.startswith("COPY ")))
@@ -70,6 +70,8 @@ class VerificationParityTests(unittest.TestCase):
             text = text.replace('"' + path + '"', repr(str(self.root) + path))
         self.wrapper = self.root / "wrapper.sh"
         self.wrapper.write_text(text)
+        (self.expected / "verify-cpu-cpp-toolchain.sh").write_text(
+            '#!/usr/bin/env bash\nexit "${FIXTURE_CPP_EXIT:-0}"\n')
         (self.expected / "verify-runner-image.sh").write_text('''#!/usr/bin/env bash
 set -euo pipefail
 python3 -B - "$@" <<'HEALTH'
@@ -225,7 +227,7 @@ raise SystemExit(29 if os.environ.get('FIXTURE_FAIL_NODE') == sys.argv[0] else 0
         self.assertEqual(self.calls(), [])
 
     def test_required_independent_inputs_cannot_fall_back_to_image_files(self):
-        for name in ("verify-runner-image.sh", "collect-runner-identity.py", "tool-pins.json", "cache-policy.json",
+        for name in ("verify-runner-image.sh", "verify-cpu-cpp-toolchain.sh", "collect-runner-identity.py", "tool-pins.json", "cache-policy.json",
                      "python-requirements.lock", "playwright-pin.txt"):
             with self.subTest(name=name):
                 path = self.expected / name
