@@ -34,6 +34,18 @@ packages and provenance. A source-only revision change preserves the dependency
 cache; a dependency change preserves SDK installation. Both environments use the
 same dependency payload and stores.
 
+CPU images additionally provide LLVM 19's compiler, clang-format, clang-tidy,
+FileCheck, compiler-rt sanitizers and LLVM/Clang development headers/CMake
+packages. Their compiler environment selects clang/clang++ from
+`/usr/lib/llvm-19/bin`; GCC 14 supplies libstdc++ with the C++23 `std::expected`
+monadic operations needed by the standalone Skippy facade. Other backend
+compiler selections retain their existing configuration.
+`verify-cpu-cpp-toolchain` checks the selected LLVM major and plugin development
+inputs, then compiles and runs a sanitized C++23 monadic-expected program and a
+libFuzzer smoke. CPU candidate verification requires these checks offline.
+Consumers must qualify and adopt a newly published immutable CPU digest before
+using these capabilities; existing digests retain their previous contents.
+
 The npm cache and pnpm store have explicit paths under `/home/runner`, so Actions'
 `HOME=/github/home` does not hide them. Warming removes temporary `node_modules`
 trees before the layer is saved. Jobs install their own checkout from the baked

@@ -47,7 +47,7 @@ destination.write_text('# syntax=docker/dockerfile:1.7\nARG CANDIDATE_IMAGE\n'
     + f'COPY --from={target} /tmp/mesh-runner-identity.json /runtime-identity.json\n')
 PY
 cp "$repository_root"/config/{playwright-pin.txt,tool-pins.json,cache-policy.json,python-requirements.lock} "$context/config/"
-cp "$repository_root"/scripts/{verify-runner-candidate.sh,verify-runner-image.sh,collect-runner-identity.py} "$context/scripts/"
+cp "$repository_root"/scripts/{verify-runner-candidate.sh,verify-runner-image.sh,verify-cpu-cpp-toolchain.sh,collect-runner-identity.py} "$context/scripts/"
 cp "$repository_root"/scripts/{bind-runner-identity.py,measure-image-layers.py,collect-runner-identity.py} "$evidence/binder/"
 cp "$repository_root/tests/integration/runner-identity.sh" "$evidence/baseline-helper.sh"
 cp "${BASH_SOURCE[0]}" "$evidence/parity-helper.sh"
@@ -104,7 +104,7 @@ baseline="${baselines[0]}"
 for filename in playwright-pin.txt tool-pins.json cache-policy.json python-requirements.lock; do
   cmp "$context/config/$filename" "$baseline/expected/$filename"
 done
-for filename in verify-runner-candidate.sh verify-runner-image.sh collect-runner-identity.py; do
+for filename in verify-runner-candidate.sh verify-runner-image.sh verify-cpu-cpp-toolchain.sh collect-runner-identity.py; do
   cmp "$context/scripts/$filename" "$baseline/expected/$filename"
 done
 jq -e --arg digest "$image_id" --arg revision "$verifier_revision" '

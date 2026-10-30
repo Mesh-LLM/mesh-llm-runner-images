@@ -35,7 +35,7 @@ if [[ "$backend" == web || "$backend" == browser ]]; then
 fi
 mkdir -p "$evidence/expected"
 cp "$repository_root"/config/{playwright-pin.txt,tool-pins.json,cache-policy.json,python-requirements.lock} "$evidence/expected/"
-cp "$repository_root"/scripts/{verify-runner-candidate.sh,verify-runner-image.sh,collect-runner-identity.py} "$evidence/expected/"
+cp "$repository_root"/scripts/{verify-runner-candidate.sh,verify-runner-image.sh,verify-cpu-cpp-toolchain.sh,collect-runner-identity.py} "$evidence/expected/"
 cat > "$evidence/container.sh" <<'CONTAINER'
 set -euo pipefail
 work="$(mktemp -d /tmp/runner-identity.XXXXXX)"

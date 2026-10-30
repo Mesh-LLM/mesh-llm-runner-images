@@ -38,7 +38,7 @@ def health_command(command):
 
 
 try:
-    for filename in ("verify-runner-image.sh", "collect-runner-identity.py", "tool-pins.json",
+    for filename in ("verify-runner-image.sh", "verify-cpu-cpp-toolchain.sh", "collect-runner-identity.py", "tool-pins.json",
                      "cache-policy.json", "python-requirements.lock", "playwright-pin.txt"):
         require((directory / filename).is_file(), f"missing independent verification input: {filename}")
     spec = importlib.util.spec_from_file_location("runner_identity", directory / "collect-runner-identity.py")

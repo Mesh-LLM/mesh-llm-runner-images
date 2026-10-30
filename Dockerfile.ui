@@ -139,7 +139,7 @@ ARG MESH_LLM_REVISION
 ARG RUNNER_IMAGES_REVISION
 ARG VERIFIER_REVISION
 COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
-COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/verify-cpu-cpp-toolchain.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
 RUN --network=none expected_playwright=none \
     && if [[ "${BACKEND}" == browser ]]; then expected_playwright="$(cat /opt/mesh-runner-verification/playwright-pin.txt)"; fi \
     && bash /opt/mesh-runner-verification/verify-runner-candidate.sh \

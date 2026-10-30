@@ -19,7 +19,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # cannot turn version verification into a comparison against its own default.
 # Verification inputs are separate from the candidate's own stamps and locks.
 COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
-COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/verify-cpu-cpp-toolchain.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
 
 RUN --network=none [[ "${CANDIDATE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]] \
     && test -n "${EXPECTED_ENVIRONMENT}" \

@@ -122,6 +122,17 @@ RUN --mount=type=cache,id=mesh-runner-pip-python3.12-ubuntu24-${TARGETARCH},targ
 
 FROM toolchain AS backend-cpu
 
+# CPU validation owns one coherent LLVM toolchain. GCC 14 supplies libstdc++'s
+# C++23 expected monadic operations while preserving the Linux C++ ABI.
+ENV PATH=/usr/lib/llvm-19/bin:${PATH} \
+    CC=clang \
+    CXX=clang++
+USER root
+COPY scripts/verify-cpu-cpp-toolchain.sh /usr/local/bin/verify-cpu-cpp-toolchain.sh
+RUN chmod 0755 /usr/local/bin/verify-cpu-cpp-toolchain.sh \
+    && ln -s verify-cpu-cpp-toolchain.sh /usr/local/bin/verify-cpu-cpp-toolchain
+USER runner
+
 FROM toolchain AS backend-vulkan
 
 # NVIDIA Container Toolkit defaults to compute,utility. Graphics is additionally
@@ -173,7 +184,7 @@ FROM toolchain AS backend-web
 
 # Chromium's system dependencies are Playwright's to own, not ours: rather
 # than hand-listing them in profiles/backends/web.yml (which stays an empty
-# apt.packages list, like cpu.yml), `playwright install-deps chromium`
+# apt.packages list), `playwright install-deps chromium`
 # derives and installs that list itself at build time. The version baked
 # here is the single declared pin in config/playwright-pin.txt; mesh-llm's
 # ui_e2e job asserts its own @playwright/test resolves to the same string
@@ -279,7 +290,7 @@ ARG VERIFIER_REVISION
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
 COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
-COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/verify-cpu-cpp-toolchain.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
 RUN --network=none expected_playwright=none \
     && if [[ "${BACKEND}" == web ]]; then expected_playwright="$(cat /opt/mesh-runner-verification/playwright-pin.txt)"; fi \
     && bash /opt/mesh-runner-verification/verify-runner-candidate.sh \
@@ -331,7 +342,7 @@ ARG VERIFIER_REVISION
 ARG CUDA_SERIES=none
 ARG ROCM_VERSION=none
 COPY config/playwright-pin.txt config/tool-pins.json config/cache-policy.json config/python-requirements.lock /opt/mesh-runner-verification/
-COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
+COPY scripts/verify-runner-candidate.sh scripts/verify-runner-image.sh scripts/verify-cpu-cpp-toolchain.sh scripts/collect-runner-identity.py /opt/mesh-runner-verification/
 RUN --network=none bash /opt/mesh-runner-verification/verify-runner-candidate.sh \
       --expected-directory /opt/mesh-runner-verification \
       --verifier-revision "${VERIFIER_REVISION}" \

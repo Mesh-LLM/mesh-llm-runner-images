@@ -33,6 +33,10 @@ for prefix in ("/etc/mesh", "/opt/", "/home/runner", "/__e/"):
     text = text.replace(prefix, root + prefix)
 Path(output).write_text(text)
 PY
+cat > "$temporary_directory/verify-cpu-cpp-toolchain.sh" <<'CPU'
+#!/usr/bin/env bash
+exit "${FIXTURE_CPP_EXIT:-0}"
+CPU
 
 cat > "$temporary_directory/fixture-env.sh" <<'ENV'
 command() {
@@ -140,6 +144,8 @@ done
 grep -q '^import langchain_openai' "$FIXTURE_LOG"
 expect_failure env FIXTURE_MISSING_COMMAND=cargo bash "$temporary_directory/verifier.sh" public cpu
 expect_failure env FIXTURE_MISSING_COMMAND=mold bash "$temporary_directory/verifier.sh" public cpu
+expect_failure env FIXTURE_MISSING_COMMAND=verify-cpu-cpp-toolchain bash "$temporary_directory/verifier.sh" public cpu
+expect_failure env FIXTURE_CPP_EXIT=9 bash "$temporary_directory/verifier.sh" public cpu
 printf 'web\n' > "$FIXTURE_ROOT/etc/mesh-runner-backend"
 printf '1.62.1\n' > "$FIXTURE_ROOT/etc/mesh-runner-playwright-version"
 export PLAYWRIGHT_BROWSERS_PATH="$FIXTURE_ROOT/opt/ms-playwright"
