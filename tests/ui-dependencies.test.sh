@@ -63,4 +63,20 @@ index_source
 mv "$source_root/crates/mesh-llm-ui/package.json" "$temporary_directory/package.json"
 ln -s "$temporary_directory/package.json" "$source_root/crates/mesh-llm-ui/package.json"
 expect_failure symlink
+rm "$source_root/crates/mesh-llm-ui/package.json"
+mv "$temporary_directory/package.json" "$source_root/crates/mesh-llm-ui/package.json"
+mkdir "$source_root/mesh"
+mv "$source_root/crates" "$source_root/mesh/crates"
+mv "$source_root/website" "$source_root/mesh/website"
+index_source
+prepare relocated
+jq -e '.files | map(.path) == [".npmrc", "mesh/crates/mesh-llm-ui/.npmrc", "mesh/crates/mesh-llm-ui/package.json", "mesh/crates/mesh-llm-ui/pnpm-lock.yaml", "pnpm-workspace.yaml"]' \
+  "$temporary_directory/relocated/dependency-index.json" >/dev/null
+cmp "$source_root/mesh/crates/mesh-llm-ui/package.json" "$temporary_directory/relocated/mesh/crates/mesh-llm-ui/package.json"
+mkdir -p "$source_root/crates/mesh-llm-ui"
+expect_failure ambiguous
+rm -rf "$source_root/crates"
+mv "$source_root/mesh" "$temporary_directory/mesh"
+ln -s "$temporary_directory/mesh" "$source_root/mesh"
+expect_failure relocated-parent-symlink
 echo "UI dependency subset tests passed"

@@ -60,6 +60,7 @@ FROM ui-tools AS ui-inputs
 USER root
 COPY build-context/manifests/public/dependencies/ /tmp/manifest-inputs/
 COPY scripts/prepare-ui-dependencies.sh /usr/local/bin/prepare-ui-dependencies
+COPY scripts/source-component-path.sh /usr/local/bin/source-component-path.sh
 RUN chmod 0755 /usr/local/bin/prepare-ui-dependencies \
     && prepare-ui-dependencies /tmp/manifest-inputs /ui-manifests
 
@@ -69,6 +70,7 @@ ENV NPM_CONFIG_CACHE=/home/runner/.npm \
     npm_config_store_dir=/home/runner/.local/share/pnpm/store
 COPY --link --chown=1001:123 --from=ui-inputs /ui-manifests/ /opt/mesh-llm/manifests/
 COPY scripts/warm-ui-dependencies.sh /usr/local/bin/warm-ui-dependencies
+COPY scripts/source-component-path.sh /usr/local/bin/source-component-path.sh
 # This store has no shared cache mount and never imports the full image store:
 # cached lifecycle output from that store may contain ONNX CUDA libraries.
 RUN chmod 0755 /usr/local/bin/warm-ui-dependencies \

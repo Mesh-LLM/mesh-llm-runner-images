@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 SHA = re.compile(r"[0-9a-f]{40}")
-UI_PATH = re.compile(r"(?:crates/mesh-llm-ui/)?(?:package\.json|package-lock\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|\.npmrc)")
+UI_PATH = re.compile(r"(?:(?:mesh/)?crates/mesh-llm-ui/)?(?:package\.json|package-lock\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|\.npmrc)")
 # These files describe the payload or its source. They are copied separately
 # after warming and must never become dependency inputs themselves.
 DEPENDENCY_METADATA = {"dependency-index.json", "manifest-index.json", "source-revision.txt", "profile.txt"}
@@ -275,7 +275,11 @@ def collect_identity(expected_directory, expected, verifier_revision, *, root=Pa
     index = canonical_index(manifests)
     if lean:
         require(all(UI_PATH.fullmatch(entry["path"]) for entry in index["files"]), "lean dependency index includes non-UI inputs")
-    require({"crates/mesh-llm-ui/package.json", "crates/mesh-llm-ui/pnpm-lock.yaml"}.issubset({entry["path"] for entry in index["files"]}), "missing UI manifest/lockfile inputs")
+    indexed_paths = {entry["path"] for entry in index["files"]}
+    ui_components = [prefix for prefix in ("crates/mesh-llm-ui", "mesh/crates/mesh-llm-ui")
+                     if any(path.startswith(prefix + "/") for path in indexed_paths)]
+    require(len(ui_components) == 1, "expected exactly one UI dependency source layout")
+    require({ui_components[0] + "/package.json", ui_components[0] + "/pnpm-lock.yaml"}.issubset(indexed_paths), "missing UI manifest/lockfile inputs")
     audit = json.loads((manifests / "manifest-index.json").read_text())
     require(audit.get("source_revision") == expected["mesh_revision"] == (manifests / "source-revision.txt").read_text().strip(), "manifest/source provenance mismatch")
     require(audit.get("profile") == expected["environment"] == (manifests / "profile.txt").read_text().strip(), "manifest profile mismatch")

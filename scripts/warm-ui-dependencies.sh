@@ -2,9 +2,12 @@
 set -euo pipefail
 
 manifest_root="${1:-/opt/mesh-llm/manifests}"
+# shellcheck source=scripts/source-component-path.sh
+source "$(dirname "${BASH_SOURCE[0]}")/source-component-path.sh"
+ui_relative="$(source_component_path "$manifest_root" ui)"
 test -s "$manifest_root/dependency-index.json"
-test -s "$manifest_root/crates/mesh-llm-ui/package.json"
-test -s "$manifest_root/crates/mesh-llm-ui/pnpm-lock.yaml"
+test -s "$manifest_root/$ui_relative/package.json"
+test -s "$manifest_root/$ui_relative/pnpm-lock.yaml"
 [[ "${ONNXRUNTIME_NODE_INSTALL:-}" == skip ]] || {
   echo "lean UI warming requires ONNXRUNTIME_NODE_INSTALL=skip" >&2
   exit 1
@@ -21,6 +24,6 @@ chown -R runner:docker /opt/mesh-llm/manifests /home/runner/.npm /home/runner/.l
 runuser -u runner -- env HOME=/home/runner PNPM_HOME=/home/runner/.local/share/pnpm \
   npm_config_store_dir=/home/runner/.local/share/pnpm/store \
   NPM_CONFIG_CACHE=/home/runner/.npm ONNXRUNTIME_NODE_INSTALL=skip PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-  pnpm --dir "$manifest_root/crates/mesh-llm-ui" fetch --frozen-lockfile
-rm -rf "$manifest_root/crates/mesh-llm-ui/node_modules"
+  pnpm --dir "$manifest_root/$ui_relative" fetch --frozen-lockfile
+rm -rf "$manifest_root/$ui_relative/node_modules"
 chown -R runner:docker /opt/mesh-llm/manifests /home/runner/.npm /home/runner/.local/share/pnpm

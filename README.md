@@ -51,6 +51,12 @@ The npm cache and pnpm store have explicit paths under `/home/runner`, so Action
 trees before the layer is saved. Jobs install their own checkout from the baked
 stores, which are writable by root and runner.
 
+Dependency preparation and warming accept either the legacy UI/website source
+directories or their relocated `mesh/` directories, requiring exactly one of
+each component that is present. Original dependency paths and hashes remain
+in the payload and source audit. A missing UI input fails warming immediately;
+an empty cache is never admitted by creating a versioned pnpm store directory.
+
 Lean UI warming selects only root/UI package-manager inputs and keeps provenance
 outside the dependency payload. It builds a fresh pnpm store with
 `ONNXRUNTIME_NODE_INSTALL=skip`, the pinned ONNX package's supported way to skip

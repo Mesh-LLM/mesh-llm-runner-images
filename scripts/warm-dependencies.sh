@@ -2,6 +2,14 @@
 set -euo pipefail
 
 manifest_root="${1:-/opt/mesh-llm/manifests}"
+# shellcheck source=scripts/source-component-path.sh
+source "$(dirname "${BASH_SOURCE[0]}")/source-component-path.sh"
+ui_relative="$(source_component_path "$manifest_root" ui)"
+website_relative="$(source_component_path "$manifest_root" website true)"
+[[ -s "$manifest_root/$ui_relative/package.json" && -s "$manifest_root/$ui_relative/pnpm-lock.yaml" ]] || {
+  echo "missing UI package manifest or pnpm lockfile: $ui_relative" >&2
+  exit 1
+}
 test -f "$manifest_root/dependency-index.json"
 mkdir -p /home/runner/.npm /home/runner/.local/share/pnpm/store
 chown -R runner:docker /home/runner/.npm /home/runner/.local/share/pnpm
@@ -27,17 +35,19 @@ if [[ -f "$manifest_root/ci/requirements-ci-python.txt" ]]; then
     "$manifest_root/ci/requirements-ci-python.txt"
 fi
 
-if [[ -f "$manifest_root/crates/mesh-llm-ui/pnpm-lock.yaml" ]]; then
-  runuser -u runner -- env HOME=/home/runner PNPM_HOME=/home/runner/.local/share/pnpm \
-    npm_config_store_dir=/home/runner/.local/share/pnpm/store \
-    pnpm --dir "$manifest_root/crates/mesh-llm-ui" fetch --frozen-lockfile
-  rm -rf "$manifest_root/crates/mesh-llm-ui/node_modules"
-fi
+runuser -u runner -- env HOME=/home/runner PNPM_HOME=/home/runner/.local/share/pnpm \
+  npm_config_store_dir=/home/runner/.local/share/pnpm/store \
+  pnpm --dir "$manifest_root/$ui_relative" fetch --frozen-lockfile
+rm -rf "$manifest_root/$ui_relative/node_modules"
 
-if [[ -f "$manifest_root/website/package-lock.json" && -f "$manifest_root/website/package.json" ]]; then
+if [[ -n "$website_relative" ]]; then
+  [[ -s "$manifest_root/$website_relative/package-lock.json" && -s "$manifest_root/$website_relative/package.json" ]] || {
+    echo "missing website package manifest or npm lockfile: $website_relative" >&2
+    exit 1
+  }
   runuser -u runner -- env HOME=/home/runner NPM_CONFIG_CACHE=/home/runner/.npm \
-    npm --prefix "$manifest_root/website" ci --ignore-scripts --no-audit --no-fund
-  rm -rf "$manifest_root/website/node_modules"
+    npm --prefix "$manifest_root/$website_relative" ci --ignore-scripts --no-audit --no-fund
+  rm -rf "$manifest_root/$website_relative/node_modules"
 fi
 
 chown -R runner:docker /opt/mesh-llm /home/runner/.cargo /home/runner/.npm /home/runner/.local

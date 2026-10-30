@@ -113,6 +113,7 @@ ENV NPM_CONFIG_CACHE=/home/runner/.npm \
 COPY build-context/manifests/public/dependencies/ /opt/mesh-llm/manifests/
 COPY config/python-requirements.lock /etc/mesh-runner-python-requirements.lock
 COPY scripts/warm-dependencies.sh /usr/local/bin/warm-dependencies
+COPY scripts/source-component-path.sh /usr/local/bin/source-component-path.sh
 COPY scripts/verify-python-requirements.sh /usr/local/bin/verify-python-requirements
 RUN --mount=type=cache,id=mesh-runner-pip-python3.12-ubuntu24-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
     chmod 0755 /usr/local/bin/warm-dependencies /usr/local/bin/verify-python-requirements \
