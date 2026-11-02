@@ -15,6 +15,7 @@ apt:
     - jq
     - libcurl4-openssl-dev
     - libdbus-1-dev
+    - libclang-dev
     - libssl-dev
     - lld
     - lsof
