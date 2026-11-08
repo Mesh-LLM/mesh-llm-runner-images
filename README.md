@@ -131,7 +131,7 @@ scripts/prepare-build-context.sh /Users/ndizazzo/dev/mesh/mesh-llm
 docker buildx build \
   --platform linux/amd64 \
   --target public \
-  --build-arg ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda \
+  --build-arg ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232 \
   --build-arg BACKEND=cpu \
   --build-arg RUNNER_ENVIRONMENT=public \
   --build-arg MESH_LLM_REVISION="$(git -C /Users/ndizazzo/dev/mesh/mesh-llm rev-parse HEAD)" \
