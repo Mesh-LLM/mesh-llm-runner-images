@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 ARG BACKEND=cpu
-ARG ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+ARG ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232
 
 # Base image = official GitHub Actions runner image. Pinned by digest;
 # the digest corresponds to the upstream `latest` tag at the time of this
@@ -9,12 +9,15 @@ ARG ACTIONS_RUNNER_BASE_IMAGE=ghcr.io/actions/actions-runner:latest@sha256:0cfdc
 #   - Ubuntu 24.04 (noble), ImageOS=ubuntu24,
 #   - runner user (uid 1001, gid 1001), supplementary groups: sudo, users, docker (gid 123),
 #   - actions/runner externals at /home/runner/externals/{node20,node24}/bin/{node,npm,npx,corepack}
-#     (node24 = v24.18.0, node20 = v20.20.2),
+#     (node24 = v24.22.1, node20 = v20.20.2), plus node20_alpine/node24_alpine
+#     (musl builds, not runnable in this glibc image),
 #   - /usr/bin/docker (client only, no dockerd),
 #   - ENV: RUNNER_MANUALLY_TRAP_SIG=1, ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1, ImageOS=ubuntu24,
 #   - ENTRYPOINT=[], CMD=[/bin/bash], WORKDIR=/home/runner.
-# Known-good reference digest (mirrors `latest` as of July 2026):
-#   sha256:0cfdcc701ce933c6d243c6b0b2da767366dc9f2e99961d4c3754b0b78084cdda
+# Known-good reference digest (mirrors `latest` as of November 2026, agent
+# v2.338.2; the previous digest was rejected by the Actions service after the
+# 30-day runner deprecation window lapsed):
+#   sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232
 FROM ${ACTIONS_RUNNER_BASE_IMAGE} AS toolchain
 
 ARG TARGETARCH
