@@ -30,11 +30,6 @@ python3 -m venv /opt/mesh-llm/venv
 /opt/mesh-llm/venv/bin/pip install --disable-pip-version-check --no-deps \
   -r "$python_lock"
 /opt/mesh-llm/venv/bin/pip check
-if [[ -f "$manifest_root/ci/requirements-ci-python.txt" ]]; then
-  /usr/local/bin/verify-python-requirements /opt/mesh-llm/venv/bin/pip \
-    "$manifest_root/ci/requirements-ci-python.txt"
-fi
-
 runuser -u runner -- env HOME=/home/runner PNPM_HOME=/home/runner/.local/share/pnpm \
   npm_config_store_dir=/home/runner/.local/share/pnpm/store \
   pnpm --dir "$manifest_root/$ui_relative" fetch --frozen-lockfile

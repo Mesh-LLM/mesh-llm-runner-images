@@ -77,6 +77,7 @@ python() {
   if [[ "$1" == --version ]]; then echo 'Python 3 fixture';
   else cat >> "$FIXTURE_LOG"; fi
 }
+hf() { echo 'hf fixture'; return "${FIXTURE_HF_EXIT:-0}"; }
 ENV
 export BASH_ENV="$temporary_directory/fixture-env.sh"
 export ONNXRUNTIME_NODE_INSTALL=skip
@@ -94,8 +95,8 @@ mesh_revision="$(printf '%040d' 1)"
 runner_revision="$(printf '%040d' 2)"
 verify public ui "$mesh_revision" none none "$runner_revision" none > "$temporary_directory/ui-output"
 grep -q '"cargo": null' "$temporary_directory/ui-output"
-if grep -Eq '^required:(cmake|lld|ninja|python)$|import langchain_openai' "$FIXTURE_LOG"; then
-  echo 'lean verifier requested full-image tools or AI dependencies' >&2; exit 1
+if grep -Eq '^required:(cmake|hf|lld|ninja|python)$|import huggingface_hub' "$FIXTURE_LOG"; then
+  echo 'lean verifier requested full-image tools or dependencies' >&2; exit 1
 fi
 expect_failure env FIXTURE_ARCH=aarch64 bash "$temporary_directory/verifier.sh" public ui
 expect_failure env FIXTURE_MISSING_COMMAND=tar bash "$temporary_directory/verifier.sh" public ui
@@ -130,7 +131,7 @@ expect_failure env PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 bash "$temporary_directory
 printf 'missing-chromium\n' > "$FIXTURE_ROOT/etc/mesh-runner-chromium-build"
 expect_failure verify public browser
 
-# Existing full CPU requirements and AI imports remain mandatory.
+# Full images provide the model-download CLI.
 printf 'cpu\n' > "$FIXTURE_ROOT/etc/mesh-runner-backend"
 rm "$FIXTURE_ROOT/etc/mesh-runner-playwright-version"
 unset PLAYWRIGHT_BROWSERS_PATH PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD ONNXRUNTIME_NODE_INSTALL
@@ -138,10 +139,12 @@ export FIXTURE_FULL=true
 : > "$FIXTURE_LOG"
 verify public cpu "$mesh_revision" none none "$runner_revision" none > "$temporary_directory/cpu-output"
 grep -q '"cargo": "cargo fixture"' "$temporary_directory/cpu-output"
-for full_command in cargo cc cmake docker git jq just lld mold node ninja npm pnpm python readelf rustc sccache; do
+for full_command in cargo cc cmake docker git hf jq just lld mold node ninja npm pnpm python readelf rustc sccache; do
   grep -qx "required:$full_command" "$FIXTURE_LOG"
 done
-grep -q '^import langchain_openai' "$FIXTURE_LOG"
+grep -q '^import huggingface_hub' "$FIXTURE_LOG"
+expect_failure env FIXTURE_MISSING_COMMAND=hf bash "$temporary_directory/verifier.sh" public cpu
+expect_failure env FIXTURE_HF_EXIT=9 bash "$temporary_directory/verifier.sh" public cpu
 expect_failure env FIXTURE_MISSING_COMMAND=cargo bash "$temporary_directory/verifier.sh" public cpu
 expect_failure env FIXTURE_MISSING_COMMAND=mold bash "$temporary_directory/verifier.sh" public cpu
 expect_failure env FIXTURE_MISSING_COMMAND=verify-cpu-cpp-toolchain bash "$temporary_directory/verifier.sh" public cpu
@@ -152,6 +155,6 @@ export PLAYWRIGHT_BROWSERS_PATH="$FIXTURE_ROOT/opt/ms-playwright"
 : > "$FIXTURE_LOG"
 verify public web "$mesh_revision" none none "$runner_revision" 1.62.1 >/dev/null
 grep -q 'chromium.launch' "$FIXTURE_LOG"
-grep -q '^import langchain_openai' "$FIXTURE_LOG"
+grep -q '^import huggingface_hub' "$FIXTURE_LOG"
 expect_failure env FIXTURE_BROWSER_EXIT=7 bash "$temporary_directory/verifier.sh" public web
 echo 'Lean verifier capability, provenance, browser, and full-image regression checks passed'
