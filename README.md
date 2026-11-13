@@ -11,11 +11,11 @@ This repository builds full MeshLLM CI images and smaller UI images on the same 
 
 CPU, Vulkan, and CUDA tags support `linux/amd64` and `linux/arm64`. ROCm tags are intentionally `linux/amd64` only because that is the currently supported MeshLLM ROCm CI target. The compatibility aliases preserve the existing image contract: `public-*` is CPU on both architectures, while `self-hosted-*` combines CUDA 12 on AMD64 with CPU on ARM64. The existing GHCR package name is retained to avoid a registry and credential migration.
 
-The `web` backend is public-only and AMD64-only. It adds pinned Chromium to the full compiler and Python environment for website documentation, browser tests, and nightly stability consumers.
+The `web` backend is public-only and AMD64-only. It adds pinned Chromium to the full compiler environment for website documentation, browser tests, and nightly stability consumers.
 
-The public-only AMD64 `ui` and `browser` families use `Dockerfile.ui`. `public-ui-*` provides Node, pnpm, standard-library Python, archives and a dedicated UI dependency store. `public-browser-*` also includes pinned Chromium. Both retain the Actions Node paths and omit the compiler toolchains, Cargo stores and AI Python environment.
+The public-only AMD64 `ui` and `browser` families use `Dockerfile.ui`. `public-ui-*` provides Node, pnpm, standard-library Python, archives and a dedicated UI dependency store. `public-browser-*` also includes pinned Chromium. Both retain the Actions Node paths and omit the compiler toolchains, Cargo stores and model-download Python environment.
 
-Use these smaller families for ordinary UI quality, distribution builds and E2E tests. Release UI preparation still calls Cargo and Perl through `release-version.sh`; website builds call `crate-docs`; nightly stability uses AI dependencies. Those consumers retain the full images. Consumer adoption requires a qualified immutable digest.
+Use these smaller families for ordinary UI quality, distribution builds and E2E tests. Release UI preparation still calls Cargo and Perl through `release-version.sh`; website builds call `crate-docs`; nightly stability prepares Rust automation. Those consumers retain the full images. Consumer adoption requires a qualified immutable digest.
 
 ## Design
 
@@ -80,9 +80,10 @@ compatible Docker client.
 The self-hosted target reuses that same runner installation and its entrypoint.
 The base digest owns the runner and bundled Node versions. `PNPM_VERSION` and
 `RUST_VERSION` pin the additional tools, and `config/python-requirements.lock`
-pins the Python runtime dependency closure. Rebuilding validates installed tool
-versions and checks that the selected MeshLLM Python requirements need no changes
-to that closure. See `docs/PYTHON_DEPENDENCIES.md` for lock refreshes.
+pins the Hugging Face CLI dependency closure used for model downloads. Rebuilding
+validates the installed tool versions and Python dependency closure. MeshLLM's
+SDK compatibility tests use their own locked environment. See
+`docs/PYTHON_DEPENDENCIES.md` for lock refreshes.
 
 Trusted staging/promotion may replace only the registry/repository portion with
 a Depot Registry pull-through mirror while retaining the exact upstream digest.

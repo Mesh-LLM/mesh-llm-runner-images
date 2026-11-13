@@ -124,7 +124,7 @@ case "$actual_backend" in
     done
     required_commands=(bash docker git jq just node npm pnpm python3 tar gzip unzip xz zip zstd)
     ;;
-  *) required_commands=(cargo cc cmake docker git jq just lld mold node ninja npm pnpm python readelf rustc sccache) ;;
+  *) required_commands=(cargo cc cmake docker git hf jq just lld mold node ninja npm pnpm python readelf rustc sccache) ;;
 esac
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null || { echo "missing command: $command_name" >&2; exit 1; }
@@ -249,11 +249,10 @@ if [[ "$lean_backend" == true ]]; then
   python_version="$(python3 --version 2>&1)"
 else
   python - <<'PY'
-import langchain_openai
-import litellm
-import openai
+import huggingface_hub
 print("python dependencies: ok")
 PY
+  HF_HUB_OFFLINE=1 hf --help >/dev/null
   cargo_version="$(cargo --version)"
   python_version="$(python --version 2>&1)"
 fi

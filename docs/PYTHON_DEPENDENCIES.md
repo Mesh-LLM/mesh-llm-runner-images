@@ -1,33 +1,22 @@
 # Python dependency lock
 
-`config/python-requirements.lock` records the 71 runtime packages observed in
-the verified Stage 2 Linux ARM64 image. It excludes `pip`, which belongs to the
-Python/venv bootstrap. The same lock must install and pass `pip check` on both
-Linux AMD64 and ARM64 before a cohort is promoted.
+Full runner images install the exact packages in `config/python-requirements.lock`
+to provide the Hugging Face `hf` CLI. MeshLLM uses this CLI to download pinned
+models on cache misses and publish model artifacts. The lean UI and browser images
+use standard-library Python and do not install this environment.
 
-The image installs every exact entry with `--no-deps`, then checks the installed
-dependency closure. MeshLLM's `ci/requirements-ci-python.txt` is a compatibility
-requirement, not a second installation source: an offline pip dry run must
-propose no changes. A new missing dependency or incompatible version stops the
-build and requests a reviewed lock refresh. When that source manifest is absent,
-the image still installs the frozen runtime and skips only this compatibility
-probe.
+MeshLLM's SDK compatibility tests create a separate environment from the
+external SDK's hash-locked requirements. The runner image's Python lock does
+not supply or validate those clients.
 
-For an intentional refresh, use a disposable environment matching the image's
-Ubuntu/Python version. Resolve the selected MeshLLM source requirements there,
-validate the environment, and capture a candidate lock:
+To refresh the CLI, resolve its pinned version and its complete dependency
+closure using Python 3.12 in a disposable Ubuntu environment. Review the
+resulting exact package versions before replacing the lock. The image installs
+the lock with `--no-deps`, runs `pip check`, and verifies `hf --help` offline.
+Build and verify the CPU image on both AMD64 and ARM64 before promotion; a
+successful resolution on one architecture alone does not qualify the lock.
 
-```bash
-python3 -m venv /tmp/mesh-python-lock-refresh
-/tmp/mesh-python-lock-refresh/bin/pip install -r /path/to/mesh-llm/ci/requirements-ci-python.txt
-/tmp/mesh-python-lock-refresh/bin/pip check
-/tmp/mesh-python-lock-refresh/bin/pip freeze --all | sed '/^pip==/d' > /tmp/python-requirements.lock.candidate
-```
-
-Review the complete version diff before replacing the checked-in lock. Build
-and verify the CPU image on both architectures, including the source requirement
-probe and existing Python import checks. The opt-in dependency-cache integration
-test additionally checks venv permissions for both root and runner. Run
-`bash tests/integration/python-lock.sh IMAGE` to compare every installed runtime
-package against the source lock and check the closure without network access. A successful
-resolution on one architecture alone does not qualify the shared lock.
+Run `bash tests/integration/python-lock.sh IMAGE` to compare the installed
+packages against the lock and check their dependency closure without network
+access. The opt-in dependency-cache integration test also checks venv
+permissions for root and runner.
