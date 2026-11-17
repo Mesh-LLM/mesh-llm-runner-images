@@ -66,6 +66,15 @@ RUN --mount=type=cache,id=mesh-runner-apt-lists-ubuntu24-${TARGETARCH},target=/v
     && apt-get install -y --no-install-recommends "${packages[@]}" \
     && rm -rf /tmp/profiles
 
+# Keep MeshLLM's selected backend compiler unchanged while providing the
+# separately versioned LibTooling surface used by deterministic source
+# rewriters. Both AMD64 and ARM64 full images carry the same explicit prefix.
+COPY scripts/install-llvm22-libtooling.sh /usr/local/bin/install-llvm22-libtooling
+RUN --mount=type=cache,id=mesh-runner-apt-lists-llvm22-ubuntu24-${TARGETARCH},target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,id=mesh-runner-apt-archives-llvm22-ubuntu24-${TARGETARCH},target=/var/cache/apt,sharing=locked \
+    chmod 0755 /usr/local/bin/install-llvm22-libtooling \
+    && /usr/local/bin/install-llvm22-libtooling
+
 # The base image already provides:
 #   - group `docker` (gid 123), runner user (uid 1001) with supplementary
 #     groups [sudo, users, docker] and /home/runner (mode 0777, owned by
