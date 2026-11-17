@@ -36,6 +36,39 @@ verify_nvidia_vulkan_image_contract() {
   done
 }
 
+verify_llvm22_libtooling() {
+  local prefix=/usr/lib/llvm-22
+  local probe="$verification_directory/llvm22-libtooling"
+  "$prefix/bin/clang" --version | grep -F 'clang version 22.'
+  test -r "$prefix/lib/cmake/llvm/LLVMConfig.cmake"
+  test -r "$prefix/lib/cmake/clang/ClangConfig.cmake"
+  mkdir -p "$probe"
+  printf '%s\n' \
+    '#include <clang/Frontend/FrontendActions.h>' \
+    '#include <clang/Tooling/Tooling.h>' \
+    '#include <memory>' \
+    'int main() {' \
+    '  return clang::tooling::runToolOnCode(std::make_unique<clang::SyntaxOnlyAction>(), "int value;") ? 0 : 1;' \
+    '}' > "$probe/main.cpp"
+  # CMake, not this shell, expands the include-directory variables.
+  # shellcheck disable=SC2016
+  printf '%s\n' \
+    'cmake_minimum_required(VERSION 3.20)' \
+    'project(llvm22_libtooling_probe LANGUAGES CXX)' \
+    'find_package(LLVM REQUIRED CONFIG)' \
+    'find_package(Clang REQUIRED CONFIG)' \
+    'add_executable(llvm22-libtooling-probe main.cpp)' \
+    'target_compile_features(llvm22-libtooling-probe PRIVATE cxx_std_17)' \
+    'target_include_directories(llvm22-libtooling-probe SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})' \
+    'target_link_libraries(llvm22-libtooling-probe PRIVATE clang-cpp LLVM)' \
+    > "$probe/CMakeLists.txt"
+  cmake -S "$probe" -B "$probe/build" -G Ninja \
+    -DLLVM_DIR="$prefix/lib/cmake/llvm" \
+    -DClang_DIR="$prefix/lib/cmake/clang"
+  cmake --build "$probe/build"
+  "$probe/build/llvm22-libtooling-probe"
+}
+
 if [[ -n "$expected_environment" && "$actual_environment" != "$expected_environment" ]]; then
   echo "expected environment '$expected_environment', found '$actual_environment'" >&2
   exit 1
@@ -131,6 +164,7 @@ for command_name in "${required_commands[@]}"; do
 done
 
 if [[ "$lean_backend" == false ]]; then
+  verify_llvm22_libtooling
   printf '%s\n' 'int main(void) { return 0; }' \
     | cc -x c -fuse-ld=mold -o "$verification_directory/mold-probe" -
   readelf -p .comment "$verification_directory/mold-probe" | grep -Fq mold \

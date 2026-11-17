@@ -22,6 +22,14 @@ printf '{}\n' > "$FIXTURE_ROOT/opt/mesh-llm/manifests/manifest-index.json"
 printf '%040d\n' 1 > "$FIXTURE_ROOT/opt/mesh-llm/manifests/source-revision.txt"
 touch "$FIXTURE_ROOT/home/runner/externals/node24/bin/node" "$FIXTURE_ROOT/__e/node24/bin/node"
 chmod +x "$FIXTURE_ROOT/home/runner/externals/node24/bin/node" "$FIXTURE_ROOT/__e/node24/bin/node"
+mkdir -p "$FIXTURE_ROOT/usr/lib/llvm-22/bin" \
+  "$FIXTURE_ROOT/usr/lib/llvm-22/lib/cmake/llvm" \
+  "$FIXTURE_ROOT/usr/lib/llvm-22/lib/cmake/clang"
+printf 'fixture\n' > "$FIXTURE_ROOT/usr/lib/llvm-22/lib/cmake/llvm/LLVMConfig.cmake"
+printf 'fixture\n' > "$FIXTURE_ROOT/usr/lib/llvm-22/lib/cmake/clang/ClangConfig.cmake"
+printf '%s\n' '#!/usr/bin/env bash' "echo 'Ubuntu clang version 22.1.1'" \
+  > "$FIXTURE_ROOT/usr/lib/llvm-22/bin/clang"
+chmod +x "$FIXTURE_ROOT/usr/lib/llvm-22/bin/clang"
 
 # Relocate filesystem checks into a fixture; execute the actual verifier logic.
 python3 - "$repository_root/scripts/verify-runner-image.sh" "$temporary_directory/verifier.sh" "$FIXTURE_ROOT" <<'PY'
@@ -29,7 +37,7 @@ import sys
 from pathlib import Path
 source, output, root = sys.argv[1:]
 text = Path(source).read_text()
-for prefix in ("/etc/mesh", "/opt/", "/home/runner", "/__e/"):
+for prefix in ("/etc/mesh", "/opt/", "/home/runner", "/__e/", "/usr/lib/llvm-22"):
     text = text.replace(prefix, root + prefix)
 Path(output).write_text(text)
 PY
@@ -55,6 +63,14 @@ uname() { printf '%s\n' "${FIXTURE_ARCH:-x86_64}"; }
 id() { if [[ "$1" == -u ]]; then echo 0; else echo runner; fi; }
 docker() { echo 'Docker version fixture'; }
 cargo() { echo 'cargo fixture'; }
+cmake() {
+  printf 'cmake:%s\n' "$*" >> "$FIXTURE_LOG"
+  if [[ "$1" == --build ]]; then
+    mkdir -p "$2"
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$2/llvm22-libtooling-probe"
+    chmod +x "$2/llvm22-libtooling-probe"
+  fi
+}
 cc() {
   local output=""
   while (($# > 0)); do
@@ -143,6 +159,7 @@ for full_command in cargo cc cmake docker git hf jq just lld mold node ninja npm
   grep -qx "required:$full_command" "$FIXTURE_LOG"
 done
 grep -q '^import huggingface_hub' "$FIXTURE_LOG"
+grep -q '^cmake:--build ' "$FIXTURE_LOG"
 expect_failure env FIXTURE_MISSING_COMMAND=hf bash "$temporary_directory/verifier.sh" public cpu
 expect_failure env FIXTURE_HF_EXIT=9 bash "$temporary_directory/verifier.sh" public cpu
 expect_failure env FIXTURE_MISSING_COMMAND=cargo bash "$temporary_directory/verifier.sh" public cpu

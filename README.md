@@ -21,7 +21,7 @@ Use these smaller families for ordinary UI quality, distribution builds and E2E 
 
 The image has four layers of configuration:
 
-1. `profiles/common.yml` is the shared operating-system toolchain found in MeshLLM CI and build scripts, including both `mold` and `lld` for fast Rust linking and compatibility fallback.
+1. `profiles/common.yml` is the shared operating-system toolchain found in MeshLLM CI and build scripts, including both `mold` and `lld` for fast Rust linking and compatibility fallback. Full images also provide LLVM/Clang 22 development files and CMake packages under `/usr/lib/llvm-22` for consumers that require a version-pinned LibTooling API.
 2. `profiles/backends/*.yml` contains CPU, Vulkan, CUDA, ROCm, or Web SDK packages; the owning installer handles vendor repositories and compilers. `web`'s stays an empty `apt.packages` list — Chromium's system dependencies are `playwright install-deps chromium`'s to own, not ours; see below.
 3. `profiles/public.yml` and `profiles/self-hosted.yml` contain environment-only additions.
 4. `scripts/prepare-build-context.sh` reads a MeshLLM checkout, discovers its Rust, Node, Python, and Go manifests, and creates one bundle per runner environment. The Docker build warms Cargo, pnpm, npm, and Python dependencies in a shared stage.
@@ -45,6 +45,9 @@ inputs, then compiles and runs a sanitized C++23 monadic-expected program and a
 libFuzzer smoke. CPU candidate verification requires these checks offline.
 Consumers must qualify and adopt a newly published immutable CPU digest before
 using these capabilities; existing digests retain their previous contents.
+LLVM 22 is installed alongside that backend compiler and does not replace it on
+`PATH`. Consumers select the deterministic LibTooling surface explicitly with
+`/usr/lib/llvm-22`.
 
 The npm cache and pnpm store have explicit paths under `/home/runner`, so Actions'
 `HOME=/github/home` does not hide them. Warming removes temporary `node_modules`
