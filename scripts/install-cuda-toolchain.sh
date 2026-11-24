@@ -34,12 +34,16 @@ dpkg -i "$keyring"
 
 apt-get update
 # MeshLLM's llama.cpp build needs the CUDA compiler, runtime headers, and
-# cuBLAS. Avoid the cuda-toolkit meta-package: it also installs profilers,
+# cuBLAS and NVML development headers. llama.cpp uses NVML to choose GPU-SKU
+# accumulation precision; its CUDA backend includes nvml.h even when the
+# driver library will be loaded dynamically at runtime.
+# Avoid the cuda-toolkit meta-package: it also installs profilers,
 # GUI tools, Java, documentation, and unrelated math libraries, adding several
 # gigabytes to every ephemeral runner pull.
 apt-get install -y --no-install-recommends \
   "cuda-compiler-${CUDA_SERIES}" \
   "cuda-cudart-dev-${CUDA_SERIES}" \
+  "cuda-nvml-dev-${CUDA_SERIES}" \
   "libcublas-dev-${CUDA_SERIES}"
 if [[ -d "/usr/local/cuda-${CUDA_SERIES//-/.}" && ! -e /usr/local/cuda ]]; then
   ln -s "/usr/local/cuda-${CUDA_SERIES//-/.}" /usr/local/cuda
@@ -47,4 +51,5 @@ fi
 
 /usr/local/cuda/bin/nvcc --version
 test -f /usr/local/cuda/include/cublas_v2.h
+test -f /usr/local/cuda/include/nvml.h
 find /usr/local/cuda/targets -path '*/lib/libcublas.so*' -print -quit | grep -q .
