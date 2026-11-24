@@ -26,6 +26,15 @@ The image has four layers of configuration:
 3. `profiles/public.yml` and `profiles/self-hosted.yml` contain environment-only additions.
 4. `scripts/prepare-build-context.sh` reads a MeshLLM checkout, discovers its Rust, Node, Python, and Go manifests, and creates one bundle per runner environment. The Docker build warms Cargo, pnpm, npm, and Python dependencies in a shared stage.
 
+CUDA 12 and 13 images install `cuda-nvml-dev` for their selected CUDA series,
+alongside the compiler, runtime headers and cuBLAS. llama.cpp's CUDA backend
+includes `nvml.h` for GPU-SKU precision selection and loads the driver library
+dynamically at runtime. Image verification compiles an NVML declaration probe
+without a GPU. This establishes build inputs; runtime/device qualification is
+still separate. Existing published image digests retain their old contents;
+publish and adopt a newly qualified CUDA image before building an upstream
+revision that requires this header.
+
 The YAML profiles use a deliberately small schema (`schema`, `profile`, and `apt.packages`) that is parsed by portable Bash without Python or Ruby. Each bundle separates `dependencies/` from its audit files. `dependencies/dependency-index.json` hashes the manifests, package-manager configuration, and generated Cargo target stubs. `manifest-index.json`, `source-revision.txt`, and `profile.txt` record provenance outside that payload. Cargo target stubs retain the workspace graph without copying MeshLLM source code into the image.
 
 The common toolchain feeds independent SDK and dependency stages. Final images

@@ -235,8 +235,12 @@ case "$actual_backend" in
     cuda_series="$(cat /etc/mesh-runner-cuda-series)"
     nvcc --version | grep -Fq "release ${cuda_series/-/.}"
     test -f /usr/local/cuda/include/cublas_v2.h
+    test -f /usr/local/cuda/include/nvml.h
     find /usr/local/cuda/targets -path '*/lib/libcublas.so*' -print -quit | grep -q .
-    printf '%s\n' '__global__ void probe() {}' \
+    # Header declarations must compile without requiring a driver or a GPU.
+    # Merely finding nvcc and cuBLAS missed llama.cpp's new NVML dependency.
+    printf '%s\n' '#include <nvml.h>' 'static_assert(NVML_SUCCESS == 0);' \
+      '__global__ void probe() {}' \
       | nvcc -x cu -c -o "$verification_directory/probe.o" -
     ;;
   rocm)
