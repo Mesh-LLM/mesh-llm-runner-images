@@ -69,12 +69,31 @@ class GuestLifecycle(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'base.json').write_text(json.dumps({'schema': 1}))
-            args = argparse.Namespace(lease='reservation', backend='cuda', gpu='0000:01:00.0', base=root)
+            args = argparse.Namespace(lease='reservation', backend='cuda', gpu='0000:01:00.0', base=root, rom=None, rom_sha256=None)
             with patch.object(vm, 'gpu_devices', return_value=('12', ['0000:01:00.0'])), \
                     patch.object(vm, 'docker') as docker:
                 with self.assertRaisesRegex(ValueError, 'bootstrap differs'):
                     vm.run(args)
             docker.assert_not_called()
+
+    def test_supplied_rom_is_hash_bound_and_mounted_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'vbios.rom'
+            path.write_bytes(b'\x55\xaa' + b'fixture')
+            digest = vm.sha256(path)
+            self.assertEqual(vm.admit_rom(path, digest), path.resolve())
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                vm.admit_rom(path, '0' * 64)
+            args = vm.container_args('image', Path('/storage'), Path('/shared'),
+                                     devices=['0000:c2:00.0'], group='19', rom=path, rom_device='0000:c2:00.0')
+            self.assertIn(f'type=bind,src={path},dst=/rom/vbios.rom,readonly', args)
+            self.assertIn('romfile=/rom/vbios.rom', ' '.join(args))
+
+    def test_rom_without_a_pin_or_assigned_gpu_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'requires its SHA'):
+            vm.admit_rom(Path('/missing'), None)
+        with self.assertRaisesRegex(ValueError, 'assigned GPU'):
+            vm.container_args('image', Path('/storage'), Path('/shared'), rom=Path('/rom'), rom_device='0000:c2:00.0')
 
     def test_overlay_never_copies_the_golden_data_disk(self):
         with tempfile.TemporaryDirectory() as tmp:

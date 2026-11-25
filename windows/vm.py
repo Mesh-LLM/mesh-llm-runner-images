@@ -89,8 +89,8 @@ def restore_ownership(image, shared):
            "-R", f"{os.getuid()}:{os.getgid()}", "/work", stdout=subprocess.DEVNULL)
 
 
-def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None):
-    if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso, base] if path is not None):
+def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None, rom=None, rom_device=None):
+    if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso, base, rom] if path is not None):
         raise ValueError("Docker mount paths cannot contain commas or newlines")
     args = ["--user", "0", "--device", "/dev/kvm", "--device", "/dev/net/tun", "--cap-add", "NET_ADMIN",
             "--cpus", str(cpus), "--memory", f"{memory + 2}g", "--pids-limit", "1024",
@@ -107,10 +107,16 @@ def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), gr
                  "--env", "DISK_FMT=qcow2", "--env", "DISK_IO=threads", "--env", "DISK_CACHE=writeback"]
     if lease:
         args += ["--label", "mesh.windows.lease=" + lease]
+    if rom:
+        if rom_device not in devices:
+            raise ValueError("ROM must belong to the assigned GPU")
+        args += ["--mount", f"type=bind,src={rom},dst=/rom/vbios.rom,readonly"]
     if devices:
         args += ["--device", "/dev/vfio/vfio", "--device", f"/dev/vfio/{group}",
                  "--ulimit", "memlock=-1:-1",
-                 "--env", "ARGUMENTS=" + " ".join(f"-device vfio-pci,host={device}" for device in devices)]
+                 "--env", "ARGUMENTS=" + " ".join(
+                     f"-device vfio-pci,host={device}" + (",romfile=/rom/vbios.rom" if rom and device == rom_device else "")
+                     for device in devices)]
     return [*args, image]
 
 
@@ -187,6 +193,19 @@ def overlay_storage(image, base, storage):
            "create", "-f", "qcow2", "-F", disk_format, "-b", "/base/" + disks[0], "/storage/data.qcow2")
 
 
+def admit_rom(path, digest):
+    if not path and not digest:
+        return None
+    if not path or not digest or not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("a supplied GPU ROM requires its SHA-256")
+    path = path.resolve(strict=True)
+    with path.open('rb') as stream:
+        header = stream.read(2)
+    if sha256(path) != digest or header != b'\x55\xaa':
+        raise ValueError("GPU ROM checksum or option-ROM header mismatch")
+    return path
+
+
 def prepare(args):
     iso = args.iso.resolve(strict=True)
     if sha256(iso) != args.iso_sha256:
@@ -212,6 +231,7 @@ def prepare(args):
 def run(args):
     if not args.lease:
         raise ValueError("the caller must supply its exclusive host reservation identity")
+    rom = admit_rom(args.rom, args.rom_sha256)
     group, devices = gpu_devices(args.backend, args.gpu)
     base = args.base.resolve(strict=True)
     receipt = json.loads((base / "base.json").read_text())
@@ -241,12 +261,13 @@ def run(args):
     (shared / "input/guest.json").write_text(json.dumps({"schema": 1, "files": guest_files}))
     result = shared / "output/result.json"
     execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group,
-               base=base / "storage", lease=args.lease)
+               base=base / "storage", lease=args.lease, rom=rom, rom_device=args.gpu)
     value = json.loads(result.read_text(encoding="utf-8-sig"))
     if value.get("schema") != 1 or type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         raise RuntimeError(f"Windows task failed: {value}")
     print(json.dumps({"schema": 1, "backend": args.backend, "gpu": args.gpu,
-                      "lease": args.lease, "base_receipt_sha256": sha256(base / "base.json"), "result": value}))
+                      "lease": args.lease, "base_receipt_sha256": sha256(base / "base.json"),
+                      "rom_sha256": args.rom_sha256, "result": value}))
 
 
 def main():
@@ -270,6 +291,8 @@ def main():
             action.add_argument("--backend", choices=VENDORS, required=True)
             action.add_argument("--gpu", required=True)
             action.add_argument("--lease", required=True)
+            action.add_argument("--rom", type=Path, help="operator-supplied GPU option ROM")
+            action.add_argument("--rom-sha256", help="SHA-256 of the supplied GPU option ROM")
     args = parser.parse_args()
     if hasattr(args, "image") and not re.fullmatch(r"(?:[^\s]+@)?sha256:[a-f0-9]{64}", args.image):
         raise ValueError("--image must be a digest reference or full sha256 Docker image ID")

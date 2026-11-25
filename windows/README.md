@@ -192,3 +192,23 @@ lease-named directory under an approved scratch root. Recovery retains
 `shared/output` under the NFS evidence root and deletes that lease directory
 before resuming scheduler admission, including when the original job was killed.
 This also reclaims disk space needed by the scheduler's normal disk reserve.
+
+## Host-supplied GPU firmware
+
+A guest can receive a GPU option ROM through `--rom PATH --rom-sha256 SHA256`.
+The launcher verifies its hash and option-ROM header and mounts it read-only.
+Firmware stays in operator storage and is never included in the public image.
+
+For a matching AMD APU image supplied in the current host's ACPI VFCT, run as an
+operator with permission to read that table:
+
+```sh
+just --justfile windows/justfile cache-rom --gpu 0000:c2:00.0 \
+  --cache "$WINDOWS_NFS_CACHE"
+```
+
+The command checks the ACPI checksum, PCI bus/function/vendor/device identity,
+image bounds and ROM checksum before caching a content-addressed artifact and
+source receipt. This supports host-specific input; firmware from another machine
+must not be substituted. Supplying firmware does not establish passthrough or
+reset qualification.

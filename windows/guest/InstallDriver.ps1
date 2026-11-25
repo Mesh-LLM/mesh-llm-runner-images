@@ -42,9 +42,9 @@ if (-not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $profile.sh
 $device = @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -and $_.PNPDeviceID.StartsWith($identity) })
 $device | Select-Object Name,PNPDeviceID,DriverVersion,ConfigManagerErrorCode | ConvertTo-Json |
     Set-Content (Join-Path $InputDirectory '..\output\gpu-after-driver.json') -Encoding UTF8
-foreach ($gpu in $device) { Write-Output "GPU after reboot: $($gpu.Name), device error $($gpu.ConfigManagerErrorCode)" }
+foreach ($gpu in $device) { Write-Output "GPU initialization: $($gpu.Name), device error $($gpu.ConfigManagerErrorCode)" }
 if ($device.Count -ne 1 -or $device[0].ConfigManagerErrorCode -ne 0) {
-    throw 'GPU driver did not initialize successfully after reboot'
+    throw 'GPU driver did not initialize successfully after installation'
 }
 $device | Select-Object Name, PNPDeviceID, DriverVersion, ConfigManagerErrorCode | ConvertTo-Json |
     Set-Content (Join-Path $InputDirectory '..\output\gpu.json') -Encoding UTF8

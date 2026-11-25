@@ -9,6 +9,9 @@ doctor *args:
 cache-iso *args:
     python3 {{justfile_directory()}}/cache-iso.py "$@"
 
+cache-rom *args:
+    python3 {{justfile_directory()}}/firmware.py "$@"
+
 prepare *args:
     python3 {{justfile_directory()}}/vm.py prepare "$@"
 
