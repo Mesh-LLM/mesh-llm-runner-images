@@ -1,0 +1,43 @@
+name: Windows provisioning syntax
+on:
+  pull_request:
+    paths: ['windows/**', '.github/workflows/windows-recipe.yml']
+  push:
+    branches: [main]
+    paths: ['windows/**', '.github/workflows/windows-recipe.yml']
+permissions:
+  contents: read
+concurrency:
+  group: windows-recipe-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  syntax:
+    name: Parse provisioning with Windows PowerShell 5.1
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Parse guest scripts and tool pins
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+          foreach ($file in Get-ChildItem windows/guest -Filter '*.ps1') {
+            $tokens = $null
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($error in $errors) {
+              Write-Output "$($file.Name): $error"
+              $failed = $true
+            }
+          }
+          if ($failed) { throw 'Windows provisioning syntax failed' }
+          $pins = Get-Content windows/tools.json -Raw | ConvertFrom-Json
+          if ($pins.schema -ne 1) { throw 'Unsupported tool pins schema' }
+          foreach ($tool in $pins.tools) {
+            if ($tool.sha256 -cnotmatch '^[a-f0-9]{64}$' -or -not $tool.url.StartsWith('https://')) {
+              throw "Invalid immutable tool download: $($tool.filename)"
+            }
+          }
