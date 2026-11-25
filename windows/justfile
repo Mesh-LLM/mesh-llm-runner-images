@@ -6,6 +6,9 @@ image:
 doctor *args:
     python3 {{justfile_directory()}}/vm.py doctor "$@"
 
+cache-iso *args:
+    python3 {{justfile_directory()}}/cache-iso.py "$@"
+
 prepare *args:
     python3 {{justfile_directory()}}/vm.py prepare "$@"
 

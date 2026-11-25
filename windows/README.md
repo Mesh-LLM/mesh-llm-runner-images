@@ -38,10 +38,49 @@ requires VFIO bindings. Neither mode establishes Windows inference qualification
 The AMD integrated GPU must be tested through repeated detach/reattach cycles;
 native Windows support alone does not establish passthrough support.
 
+## Cache installation media once per site
+
+Microsoft's consumer ISO download links expire after 24 hours. Generate a fresh
+link on the [Microsoft download page](https://www.microsoft.com/software-download/windows11)
+and take the SHA-256 for the selected language/architecture from that page's
+verification section. The temporary link is a bootstrap input, never a CI pin.
+`media.json` records the selected release, language, filename and Microsoft hash;
+`cache-iso` defaults to that hash unless `--sha256` explicitly selects other media.
+
+Store the link in a private local file, then admit the ISO into each site's NFS
+cache. Downloads follow HTTPS redirects and resume partial transfers. If a link
+expires mid-transfer, repeat with a fresh link for the same ISO and checksum.
+
+```sh
+iso=$(just --justfile windows/justfile cache-iso \
+  --cache "$WINDOWS_NFS_CACHE" --require-nfs \
+  --sha256 "$WINDOWS_ISO_SHA256" --url-file /private/windows-iso-url.txt)
+```
+
+The helper serializes publishers using an NFS file lock, verifies the complete
+download, and atomically publishes `media/sha256/<digest>/windows11.iso` plus a
+size/hash receipt. Temporary URLs are not written to receipts or command arguments.
+Consumers verify cached bytes and need no URL or network download. A corrupt
+cache entry fails instead of downloading replacement media silently.
+
+An already downloaded ISO, or a transferred copy from another site's cache, can
+be admitted with `--source /path/to/windows11.iso` instead of `--url-file`.
+Both sites use the same trusted digest; their NFS paths are site-local. The
+publisher that starts a partial download owns its continuation; completed media
+is readable by consumers with different numeric user IDs.
+
+Use a separate NFS directory for immutable prepared bases and a unique attempt
+directory for every guest. Never boot a shared writable golden disk. Keep base
+and attempt paths on NFS to avoid exhausting smaller host root filesystems.
+Configure the dedicated cache directories for the export's mapped identities;
+sticky directories can prevent cleanup when the server remaps numeric UIDs.
+The launcher preserves NFS ownership mapping instead of attempting local-host
+UID restoration with `chown` on the server.
+
 ## Prepare once
 
-Supply an existing Windows 11 x64 ISO and its trusted SHA-256. The launcher never
-downloads replacement Windows media. Use a storage filesystem with at least
+Supply the admitted Windows 11 x64 ISO and its trusted SHA-256. The launcher never
+downloads replacement Windows media. Use an NFS filesystem with at least
 64 GiB free, plus room for concurrent copies; Btrfs/XFS reflinks reduce copy cost.
 Windows media and disks remain operator-controlled artifacts.
 
@@ -49,8 +88,8 @@ Windows media and disks remain operator-controlled artifacts.
 just --justfile windows/justfile image
 image=$(docker image inspect --format '{{.Id}}' mesh-windows-smoke:local)
 just --justfile windows/justfile prepare \
-  --image "$image" --iso /media/windows11.iso --iso-sha256 "$WINDOWS_ISO_SHA256" \
-  --work /var/lib/mesh-windows/base-v1
+  --image "$image" --iso "$iso" --iso-sha256 "$WINDOWS_ISO_SHA256" \
+  --work "$WINDOWS_NFS_CACHE/bases/base-v1"
 ```
 
 Preparation installs checksum-pinned official Python, Git and Just downloads,
@@ -81,9 +120,9 @@ With the host GPU already bound to VFIO under an exclusive reservation:
 
 ```sh
 just --justfile windows/justfile run \
-  --image "$image" --base /var/lib/mesh-windows/base-v1 \
+  --image "$image" --base "$WINDOWS_NFS_CACHE/bases/base-v1" \
   --backend cuda --gpu 0000:01:00.0 --lease "$EXCLUSIVE_RESERVATION_ID" \
-  --input /work/admitted-input --work /work/windows-attempt-1 --timeout 3600
+  --input /work/admitted-input --work "$WINDOWS_NFS_CACHE/attempts/unique-reservation" --timeout 3600
 ```
 
 The launcher verifies the base receipt and makes a disposable storage copy.

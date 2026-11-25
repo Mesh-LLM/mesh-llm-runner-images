@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,6 +64,13 @@ class PassthroughPolicy(unittest.TestCase):
 
 
 class GuestLifecycle(unittest.TestCase):
+    def test_nfs_cleanup_does_not_attempt_server_uid_chown(self):
+        with patch.object(vm.shutil, "which", return_value="/usr/bin/findmnt"), \
+                patch.object(vm.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nfs\n", "")), \
+                patch.object(vm, "docker") as docker:
+            vm.restore_ownership("image", Path("/nfs/shared"))
+        docker.assert_not_called()
+
     def test_limits_devices_and_does_not_publish_ports(self):
         args = vm.container_args("sha256:" + "a" * 64, Path("/disk"), Path("/shared"), devices=["0000:01:00.0"], group="12")
         self.assertIn("/dev/vfio/12", args)

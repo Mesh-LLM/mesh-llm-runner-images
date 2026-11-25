@@ -73,6 +73,22 @@ def docker(*args, **kwargs):
     return subprocess.run(["docker", *map(str, args)], check=True, **kwargs)
 
 
+def restore_ownership(image, shared):
+    if shutil.which("findmnt"):
+        filesystem = subprocess.run(
+            ["findmnt", "--noheadings", "--output", "FSTYPE", "--target", str(shared)],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        # NFS can squash both container root and the caller to a server UID.
+        # Chown cannot normalize that mapping and may be rejected by the server.
+        # Access and cleanup must use the export's mapped identity instead.
+        if filesystem in ("nfs", "nfs4"):
+            return
+    docker("run", "--rm", "--user", "0", "--network", "none", "--entrypoint", "chown",
+           "--mount", f"type=bind,src={shared},dst=/work", image,
+           "-R", f"{os.getuid()}:{os.getgid()}", "/work", stdout=subprocess.DEVNULL)
+
+
 def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4):
     if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso] if path is not None):
         raise ValueError("Docker mount paths cannot contain commas or newlines")
@@ -121,9 +137,7 @@ def execute_vm(image, storage, shared, marker, timeout, **kwargs):
                     docker("logs", name, stdout=stream, stderr=subprocess.STDOUT)
             finally:
                 docker("rm", "--force", name, stdout=subprocess.DEVNULL)
-                docker("run", "--rm", "--user", "0", "--network", "none", "--entrypoint", "chown",
-                       "--mount", f"type=bind,src={shared},dst=/work", image,
-                       "-R", f"{os.getuid()}:{os.getgid()}", "/work", stdout=subprocess.DEVNULL)
+                restore_ownership(image, shared)
 
 
 def storage_manifest(storage):
