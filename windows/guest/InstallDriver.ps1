@@ -40,11 +40,24 @@ if (-not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $profile.sh
     if ($process.ExitCode -eq 3010) { exit 3010 }
 }
 $device = @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -and $_.PNPDeviceID.StartsWith($identity) })
-$device | Select-Object Name,PNPDeviceID,DriverVersion,ConfigManagerErrorCode | ConvertTo-Json |
+$signedDriver = @(Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceID -and $_.DeviceID.StartsWith($identity) })
+$signedDriver | Select-Object DeviceName,DeviceID,DriverVersion,DriverProviderName,IsSigned | ConvertTo-Json |
+    Set-Content (Join-Path $InputDirectory '..\output\windows-driver.json') -Encoding UTF8
+$device | Select-Object Name,PNPDeviceID,ConfigManagerErrorCode | ConvertTo-Json |
     Set-Content (Join-Path $InputDirectory '..\output\gpu-after-driver.json') -Encoding UTF8
 foreach ($gpu in $device) { Write-Output "GPU initialization: $($gpu.Name), device error $($gpu.ConfigManagerErrorCode)" }
-if ($device.Count -ne 1 -or $device[0].ConfigManagerErrorCode -ne 0) {
+if ($device.Count -ne 1 -or $device[0].ConfigManagerErrorCode -ne 0 -or
+    $signedDriver.Count -ne 1 -or -not $signedDriver[0].IsSigned) {
+    # Preserve Windows' installation diagnostics before disposable disk cleanup.
+    Copy-Item 'C:\Windows\INF\setupapi.dev.log' (Join-Path $InputDirectory '..\output\setupapi.dev.log') -ErrorAction Continue
     throw 'GPU driver did not initialize successfully after installation'
 }
-$device | Select-Object Name, PNPDeviceID, DriverVersion, ConfigManagerErrorCode | ConvertTo-Json |
+[ordered]@{
+    Name = $device[0].Name
+    PNPDeviceID = $device[0].PNPDeviceID
+    ConfigManagerErrorCode = $device[0].ConfigManagerErrorCode
+    DriverVersion = $signedDriver[0].DriverVersion
+    DriverProviderName = $signedDriver[0].DriverProviderName
+    IsSigned = $signedDriver[0].IsSigned
+} | ConvertTo-Json |
     Set-Content (Join-Path $InputDirectory '..\output\gpu.json') -Encoding UTF8
