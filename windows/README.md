@@ -121,7 +121,7 @@ vendor installer as `driver.exe`, and `driver.json`:
 
 Use `rocm` with the assigned AMD device identity for the HIP profile. Each
 disposable guest verifies the driver hash and Authenticode signature, checks the
-passed-through GPU identity, installs the driver and reboots once before running
+passed-through GPU identity, installs the driver and reboots when the vendor requests it before running
 the task. The task must check subprocess exit codes and exit nonzero on failure.
 Drivers are supplied explicitly rather than guessed from mutable download links.
 
@@ -181,7 +181,7 @@ The base pins a small startup bootstrap. Each job supplies checksum-admitted
 script fix does not require rebuilding Windows. Changing the bootstrap requires
 a fresh base; incompatible bases fail before boot. PCI detection uses PnP
 entities before vendor installation and requires successful device initialization
-after the driver's reboot.
+after installation and any vendor-requested reboot.
 
 For hosts with limited local space, configure the attempt directory on NFS.
 Windows vendor installation can create substantially more writes than the final

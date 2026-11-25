@@ -35,9 +35,9 @@ if (-not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $profile.sh
     if ($process.ExitCode -notin @(0, 3010)) { throw "GPU driver installer exited $($process.ExitCode)" }
     Set-Content $stamp $profile.sha256
     Remove-Item -LiteralPath $localDriver
-    # Reboot once even when the vendor returns 0: enumeration and its kernel
-    # driver must be settled before the smoke starts.
-    exit 3010
+    # Respect the installer's reboot contract. An unnecessary guest reset can
+    # leave an assigned GPU unusable until its Linux driver is restored.
+    if ($process.ExitCode -eq 3010) { exit 3010 }
 }
 $device = @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -and $_.PNPDeviceID.StartsWith($identity) })
 $device | Select-Object Name,PNPDeviceID,DriverVersion,ConfigManagerErrorCode | ConvertTo-Json |
