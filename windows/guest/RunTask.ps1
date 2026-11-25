@@ -28,6 +28,9 @@ function Stop-AssignedGpu {
 }
 Start-Transcript -Path "$output\guest.log" -Append -Force
 try {
+    # A vendor-requested reboot must not leave proof from the previous boot
+    # after the assigned device is enabled again.
+    if (Test-Path "$output\gpu-release.json") { Remove-Item "$output\gpu-release.json" -Force }
     # Also apply this to compatible bases prepared before the update policy.
     $updates = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
     New-Item "$updates\AU" -Force | Out-Null
