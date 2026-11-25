@@ -78,6 +78,8 @@ The launcher preserves NFS ownership mapping instead of attempting local-host
 UID restoration with `chown` on the server.
 The pinned upstream driver extraction is also adjusted to use
 `bsdtar --no-same-owner`, so root-owned archive entries do not require NFS chown.
+Only the disposable setup-driver tree is made owner-writable before unused
+variants are pruned; source archives and the admitted ISO remain unchanged.
 
 ## Prepare once
 

@@ -11,7 +11,13 @@ script = Path('/run/install.sh')
 source = script.read_text()
 before = 'bsdtar -xf /var/drivers.txz'
 assert source.count(before) == 1, 'upstream driver extraction changed'
-script.write_text(source.replace(before, 'bsdtar --no-same-owner -xf /var/drivers.txz'))
+source = source.replace(before, 'bsdtar --no-same-owner -xf /var/drivers.txz')
+selection = '  selectDrivers "$version" "$drivers" "$target" || return 1'
+assert source.count(selection) == 1, 'upstream driver selection changed'
+# Some archive directories are read-only. Squashed NFS root cannot rely on
+# CAP_DAC_OVERRIDE when pruning unused driver variants on the server.
+source = source.replace(selection, '  chmod -R u+rwX "$drivers" || return 1\n' + selection)
+script.write_text(source)
 PY
 COPY guest/ /opt/mesh-windows/guest/
 COPY tools.json /opt/mesh-windows/tools.json
