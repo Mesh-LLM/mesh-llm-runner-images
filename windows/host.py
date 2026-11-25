@@ -17,6 +17,7 @@ from vm import gpu_devices
 STATE = Path('/var/lib/mesh-windows')
 CONFIG = Path('/etc/mesh-windows/host.json')
 PCI = Path('/sys/bus/pci/devices')
+BOOT_ID = Path('/proc/sys/kernel/random/boot_id')
 
 
 def command(*args, **kwargs):
@@ -225,6 +226,33 @@ def collect_and_remove_work(config, journal):
     shutil.rmtree(work)
 
 
+def verify_amd_release(config, journal):
+    if config['backend'] != 'rocm' or 'work' not in journal:
+        return
+    work = Path(journal['work'])
+    if not (work / 'shared/input/driver.json').exists():
+        return
+    boot = BOOT_ID.read_text().strip()
+    previous_boot = journal.get('owner', {}).get('boot')
+    if previous_boot and previous_boot != boot and all(
+            (PCI / bdf / 'driver').is_symlink() and
+            (PCI / bdf / 'driver').resolve().name == driver
+            for bdf, driver in journal['bindings'].items()):
+        # A host restart can reconcile a quarantined device. Admit it only
+        # after its original bindings and native discovery already work.
+        native_probe(config)
+        return
+    # An initialized Windows APU must unload before Linux can reclaim it.
+    # Blind rebinding can wedge the host; absent proof retains VFIO quarantine.
+    path = work / 'shared/output/gpu-release.json'
+    value = json.loads(path.read_text(encoding='utf-8-sig')) if path.is_file() else {}
+    device = (PCI / config['gpu'] / 'device').read_text().strip()[2:].upper()
+    identity = 'PCI\\VEN_1002&DEV_' + device
+    if (not isinstance(value, dict) or value.get('ConfigManagerErrorCode') != 22 or
+            not str(value.get('PNPDeviceID', '')).startswith(identity)):
+        raise RuntimeError('AMD Windows guest did not confirm device release; retain VFIO quarantine')
+
+
 def restore(config, journal):
     unchanged = digest(config['jy_config']) == journal.get('paused_config')
     if not unchanged:
@@ -233,6 +261,7 @@ def restore(config, journal):
     for container in ids:
         command('docker', 'stop', '--time', '120', container)
         command('docker', 'rm', '--force', container)
+    verify_amd_release(config, journal)
     for bdf, driver in reversed(list(journal['bindings'].items())):
         command('modprobe', driver)
         set_driver(bdf, driver)
@@ -263,6 +292,7 @@ def main():
     parser.add_argument('--owner-pid', type=int)
     parser.add_argument('--backend', choices=['cuda', 'rocm'])
     parser.add_argument('--work', type=Path)
+    parser.add_argument('--firmware', action='store_true')
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise ValueError('host lifecycle operations require the installed root helper')
@@ -272,7 +302,7 @@ def main():
     if args.action == 'describe':
         if args.backend != config['backend']:
             raise ValueError('backend does not match the installed host configuration')
-        print(config['gpu'])
+        print(json.dumps(config.get('firmware', {})) if args.firmware else config['gpu'])
         return
     STATE.mkdir(mode=0o700, exist_ok=True)
     with (STATE / 'lock').open('w') as lock:

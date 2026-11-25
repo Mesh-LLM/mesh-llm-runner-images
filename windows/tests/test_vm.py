@@ -117,12 +117,14 @@ class GuestLifecycle(unittest.TestCase):
 
     def test_audio_rom_is_read_only_and_requires_paired_audio(self):
         options = dict(devices=['0000:c2:00.0', '0000:c2:00.1'], group=['19', '20'],
-                       rom=Path('/gpu.rom'), rom_device='0000:c2:00.0', audio_rom=Path('/gop.rom'))
+                       rom=Path('/gpu.rom'), rom_device='0000:c2:00.0', audio_rom=Path('/gop.rom'), pcie=True)
         args = vm.container_args('image', Path('/storage'), Path('/shared'), **options)
         self.assertIn('/dev/vfio/19', args)
         self.assertIn('/dev/vfio/20', args)
         self.assertIn('type=bind,src=/gop.rom,dst=/rom/audio.rom,readonly', args)
-        self.assertIn('host=0000:c2:00.1,romfile=/rom/audio.rom', ' '.join(args))
+        self.assertIn('pcie-root-port,id=mesh-gpu', ' '.join(args))
+        self.assertIn('host=0000:c2:00.0,bus=mesh-gpu,addr=0.0,multifunction=on,romfile=/rom/vbios.rom', ' '.join(args))
+        self.assertIn('host=0000:c2:00.1,bus=mesh-gpu,addr=0.1,romfile=/rom/audio.rom', ' '.join(args))
         options['devices'] = ['0000:c2:00.0']
         with self.assertRaisesRegex(ValueError, 'paired audio function'):
             vm.container_args('image', Path('/storage'), Path('/shared'), **options)

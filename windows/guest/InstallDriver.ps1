@@ -40,6 +40,12 @@ if (-not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $profile.sh
     if ($process.ExitCode -eq 3010) { exit 3010 }
 }
 $device = @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -and $_.PNPDeviceID.StartsWith($identity) })
+if ($profile.backend -eq 'rocm' -and $device.Count -eq 1 -and $device[0].ConfigManagerErrorCode -eq 22) {
+    # A vendor-requested reboot follows an orderly device unload. Re-enable
+    # the already installed device before requiring successful initialization.
+    Enable-PnpDevice -InstanceId $device[0].PNPDeviceID -Confirm:$false -ErrorAction Stop
+    $device = @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -and $_.PNPDeviceID.StartsWith($identity) })
+}
 $signedDriver = @(Get-CimInstance Win32_PnPSignedDriver | Where-Object { $_.DeviceID -and $_.DeviceID.StartsWith($identity) })
 $signedDriver | Select-Object DeviceName,DeviceID,DriverVersion,DriverProviderName,IsSigned | ConvertTo-Json |
     Set-Content (Join-Path $InputDirectory '..\output\windows-driver.json') -Encoding UTF8

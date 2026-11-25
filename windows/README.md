@@ -185,6 +185,20 @@ a fresh base; incompatible bases fail before boot. PCI detection uses PnP
 entities before vendor installation and requires successful device initialization
 after installation and any vendor-requested reboot.
 
+ROCm guests place the paired functions on one multifunction PCIe root port.
+Before shutdown or a requested reboot, the guest unloads its assigned AMD GPU
+and records Windows device error 22 (disabled). Host recovery requires that
+matching release receipt before binding an AMD Windows allocation back to Linux.
+Missing confirmation retains VFIO quarantine. After a host restart, recovery can
+reconcile that quarantine only when the original bindings and native discovery
+already succeed. This release path still needs hardware validation; initialization
+alone does not establish safe return to Linux.
+
+Provisioning and per-run scripts disable automatic Windows updates in disposable
+guests so updates cannot race the supplied vendor installer or replace the
+admitted driver. They also expose the pinned Python installation as `python3.exe`
+for Just's interpreter discovery.
+
 For hosts with limited local space, configure the attempt directory on NFS.
 Windows vendor installation can create substantially more writes than the final
 installed driver occupies; the disk reserve remains enforced on either filesystem.
@@ -205,6 +219,11 @@ function, supply `--audio-rom PATH --audio-rom-sha256 SHA256` as well. This
 requires both the assigned GPU ROM and its isolated paired audio function;
 the second ROM is also verified and mounted read-only. Operators must admit
 the firmware's provenance and hardware compatibility before use.
+
+An installed host profile can hold a `firmware` object containing `rom`,
+`rom_sha256`, and optional `audio_rom`, `audio_rom_sha256` fields. Read only that
+object with `mesh-windows-host describe --backend rocm --firmware`. This keeps
+each machine's own VBIOS selection in operator configuration.
 
 For a matching AMD APU image supplied in the current host's ACPI VFCT, run as an
 operator with permission to read that table:

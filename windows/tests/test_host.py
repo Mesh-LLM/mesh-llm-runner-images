@@ -19,6 +19,11 @@ class Recovery(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
+        boot = self.root / 'boot'
+        boot.write_text('current-boot')
+        patcher = patch.object(host, 'BOOT_ID', boot)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.config_file = self.root / 'agent.toml'
         self.config_file.write_text('enabled = false\n')
         self.config = {'jy_config': str(self.config_file), 'backend': 'cuda'}
@@ -41,6 +46,57 @@ class Recovery(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'GPU absent'):
                 host.restore(self.config, self.journal)
         jy.assert_not_called()
+
+    def test_windows_amd_without_guest_release_cannot_rebind_or_resume(self):
+        work = self.root / 'run_test'
+        (work / 'shared/input').mkdir(parents=True)
+        (work / 'shared/input/driver.json').write_text('{}')
+        gpu = self.root / '0000:c2:00.0'
+        gpu.mkdir()
+        (gpu / 'device').write_text('0x1586')
+        self.config.update(backend='rocm', gpu=gpu.name)
+        self.journal['work'] = str(work)
+        with patch.object(host, 'STATE', self.root), patch.object(host, 'PCI', self.root), \
+                patch.object(host, 'command', return_value=''), patch.object(host, 'jy') as jy, \
+                patch.object(host, 'set_driver') as bind:
+            with self.assertRaisesRegex(RuntimeError, 'retain VFIO quarantine'):
+                host.restore(self.config, self.journal)
+        bind.assert_not_called()
+        jy.assert_not_called()
+
+    def test_amd_release_proof_must_match_the_assigned_device(self):
+        work = self.root / 'run_test'
+        (work / 'shared/input').mkdir(parents=True)
+        (work / 'shared/output').mkdir()
+        (work / 'shared/input/driver.json').write_text('{}')
+        gpu = self.root / '0000:c2:00.0'
+        gpu.mkdir()
+        (gpu / 'device').write_text('0x1586')
+        self.config.update(backend='rocm', gpu=gpu.name)
+        self.journal['work'] = str(work)
+        receipt = work / 'shared/output/gpu-release.json'
+        with patch.object(host, 'PCI', self.root):
+            receipt.write_text(json.dumps({'PNPDeviceID': 'PCI\\VEN_1002&DEV_9999', 'ConfigManagerErrorCode': 22}))
+            with self.assertRaisesRegex(RuntimeError, 'retain VFIO quarantine'):
+                host.verify_amd_release(self.config, self.journal)
+            receipt.write_text(json.dumps({'PNPDeviceID': 'PCI\\VEN_1002&DEV_1586&SUBSYS_test', 'ConfigManagerErrorCode': 22}))
+            host.verify_amd_release(self.config, self.journal)
+
+    def test_host_restart_requires_already_restored_bindings_and_native_discovery(self):
+        work = self.root / 'run_test'
+        (work / 'shared/input').mkdir(parents=True)
+        (work / 'shared/input/driver.json').write_text('{}')
+        gpu = self.root / '0000:c2:00.0'
+        gpu.mkdir()
+        (gpu / 'driver').symlink_to('/sys/bus/pci/drivers/amdgpu')
+        self.config.update(backend='rocm', gpu=gpu.name)
+        self.journal.update(work=str(work), owner={'boot': 'previous-boot'}, bindings={gpu.name: 'amdgpu'})
+        with patch.object(host, 'PCI', self.root), patch.object(host, 'native_probe') as probe:
+            host.verify_amd_release(self.config, self.journal)
+            probe.assert_called_once_with(self.config)
+            probe.side_effect = RuntimeError('native GPU absent')
+            with self.assertRaisesRegex(RuntimeError, 'native GPU absent'):
+                host.verify_amd_release(self.config, self.journal)
 
     def test_stops_only_owned_vms_before_restoring_bindings(self):
         calls = []

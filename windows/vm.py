@@ -104,7 +104,7 @@ def restore_ownership(image, shared):
            "-R", f"{os.getuid()}:{os.getgid()}", "/work", stdout=subprocess.DEVNULL)
 
 
-def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None, rom=None, rom_device=None, audio_rom=None):
+def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None, rom=None, rom_device=None, audio_rom=None, pcie=False):
     if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso, base, rom, audio_rom] if path is not None):
         raise ValueError("Docker mount paths cannot contain commas or newlines")
     args = ["--user", "0", "--device", "/dev/kvm", "--device", "/dev/net/tun", "--cap-add", "NET_ADMIN",
@@ -137,8 +137,11 @@ def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), gr
             args += ["--device", f"/dev/vfio/{number}"]
         args += [
                  "--ulimit", "memlock=-1:-1",
-                 "--env", "ARGUMENTS=" + " ".join(
-                     f"-device vfio-pci,host={device}" + (",romfile=/rom/vbios.rom" if rom and device == rom_device else "")
+                 "--env", "ARGUMENTS=" + ("-device pcie-root-port,id=mesh-gpu,chassis=30,slot=30 " if pcie else "") + " ".join(
+                     f"-device vfio-pci,host={device}"
+                     + (f",bus=mesh-gpu,addr=0.{device[-1]}" if pcie else "")
+                     + (",multifunction=on" if pcie and device.endswith(".0") else "")
+                     + (",romfile=/rom/vbios.rom" if rom and device == rom_device else "")
                      + (",romfile=/rom/audio.rom" if audio_rom and device == audio_device else "")
                      for device in devices)]
     return [*args, image]
@@ -286,7 +289,8 @@ def run(args):
     (shared / "input/guest.json").write_text(json.dumps({"schema": 1, "files": guest_files}))
     result = shared / "output/result.json"
     execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group,
-               base=base / "storage", lease=args.lease, rom=rom, rom_device=args.gpu, audio_rom=audio_rom)
+               base=base / "storage", lease=args.lease, rom=rom, rom_device=args.gpu, audio_rom=audio_rom,
+               pcie=args.backend == 'rocm')
     value = json.loads(result.read_text(encoding="utf-8-sig"))
     if value.get("schema") != 1 or type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         raise RuntimeError(f"Windows task failed: {value}")
