@@ -64,6 +64,22 @@ class PassthroughPolicy(unittest.TestCase):
 
 
 class GuestLifecycle(unittest.TestCase):
+    def test_overlay_never_copies_the_golden_data_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / 'base'
+            base.mkdir()
+            (base / 'data.img').write_bytes(b'golden')
+            (base / 'windows.vars').write_bytes(b'EFI')
+            with patch.object(vm, 'docker') as docker:
+                vm.overlay_storage('image', base, root / 'attempt')
+            self.assertFalse((root / 'attempt/data.img').exists())
+            self.assertEqual((root / 'attempt/windows.vars').read_bytes(), b'EFI')
+            args = docker.call_args.args
+            self.assertIn(f'type=bind,src={base},dst=/base,readonly', args)
+            self.assertIn('/base/data.img', args)
+            self.assertIn('/storage/data.qcow2', args)
+
     def test_nfs_cleanup_does_not_attempt_server_uid_chown(self):
         with patch.object(vm.shutil, "which", return_value="/usr/bin/findmnt"), \
                 patch.object(vm.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "autofs\nnfs\n", "")), \

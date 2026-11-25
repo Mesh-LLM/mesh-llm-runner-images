@@ -89,8 +89,8 @@ def restore_ownership(image, shared):
            "-R", f"{os.getuid()}:{os.getgid()}", "/work", stdout=subprocess.DEVNULL)
 
 
-def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4):
-    if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso] if path is not None):
+def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None):
+    if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso, base] if path is not None):
         raise ValueError("Docker mount paths cannot contain commas or newlines")
     args = ["--user", "0", "--device", "/dev/kvm", "--device", "/dev/net/tun", "--cap-add", "NET_ADMIN",
             "--cpus", str(cpus), "--memory", f"{memory + 2}g", "--pids-limit", "1024",
@@ -102,8 +102,14 @@ def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), gr
         args += ["--mount", f"type=bind,src={oem},dst=/oem,readonly"]
     if iso:
         args += ["--mount", f"type=bind,src={iso},dst=/custom.iso,readonly"]
+    if base:
+        args += ["--mount", f"type=bind,src={base},dst=/base,readonly",
+                 "--env", "DISK_FMT=qcow2", "--env", "DISK_IO=threads", "--env", "DISK_CACHE=writeback"]
+    if lease:
+        args += ["--label", "mesh.windows.lease=" + lease]
     if devices:
         args += ["--device", "/dev/vfio/vfio", "--device", f"/dev/vfio/{group}",
+                 "--ulimit", "memlock=-1:-1",
                  "--env", "ARGUMENTS=" + " ".join(f"-device vfio-pci,host={device}" for device in devices)]
     return [*args, image]
 
@@ -119,6 +125,8 @@ def execute_vm(image, storage, shared, marker, timeout, **kwargs):
         docker("start", name, stdout=subprocess.DEVNULL)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if shutil.disk_usage(storage).free < 2 * 2**30:
+                raise RuntimeError("Windows guest disk reserve fell below 2 GiB")
             state = docker("inspect", "--format", "{{.State.Running}}", name, capture_output=True, text=True).stdout.strip()
             if state != "true":
                 break
@@ -161,6 +169,24 @@ def work_directory(path):
     return path
 
 
+def overlay_storage(image, base, storage):
+    """Keep immutable Windows bytes on NFS and only guest writes on local disk."""
+    disks = [name for name in ("data.img", "data.qcow2") if (base / name).is_file()]
+    if len(disks) != 1:
+        raise ValueError("base must contain exactly one Windows data disk")
+    storage.mkdir()
+    for path in base.iterdir():
+        if path.name != disks[0]:
+            if not path.is_file() or path.is_symlink():
+                raise ValueError("unsupported base storage metadata")
+            shutil.copyfile(path, storage / path.name)
+    disk_format = "raw" if disks[0].endswith(".img") else "qcow2"
+    docker("run", "--rm", "--user", str(os.getuid()), "--network", "none",
+           "--mount", f"type=bind,src={base},dst=/base,readonly",
+           "--mount", f"type=bind,src={storage},dst=/storage", "--entrypoint", "qemu-img", image,
+           "create", "-f", "qcow2", "-F", disk_format, "-b", "/base/" + disks[0], "/storage/data.qcow2")
+
+
 def prepare(args):
     iso = args.iso.resolve(strict=True)
     if sha256(iso) != args.iso_sha256:
@@ -200,14 +226,13 @@ def run(args):
         raise ValueError("Windows driver checksum mismatch")
     work = work_directory(args.work)
     storage, shared = work / "storage", work / "shared"
-    if shutil.disk_usage(work).free < 64 * 2**30:
-        raise ValueError("guest execution requires at least 64 GiB free space")
-    # Reflink where available; GNU cp preserves sparse files on other Linux
-    # filesystems. The golden storage directory is never writable by the VM.
-    subprocess.run(["cp", "--reflink=auto", "--sparse=always", "-a", "--no-preserve=ownership", str(base / "storage"), str(storage)], check=True)
+    if shutil.disk_usage(work).free < 10 * 2**30:
+        raise ValueError("guest execution requires at least 10 GiB free space")
+    overlay_storage(args.image, base / "storage", storage)
     shutil.copytree(args.input.resolve(strict=True), shared / "input")
     result = shared / "output/result.json"
-    execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group)
+    execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group,
+               base=base / "storage", lease=args.lease)
     value = json.loads(result.read_text(encoding="utf-8-sig"))
     if value.get("schema") != 1 or type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         raise RuntimeError(f"Windows task failed: {value}")

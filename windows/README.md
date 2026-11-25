@@ -70,8 +70,9 @@ publisher that starts a partial download owns its continuation; completed media
 is readable by consumers with different numeric user IDs.
 
 Use a separate NFS directory for immutable prepared bases and a unique attempt
-directory for every guest. Never boot a shared writable golden disk. Keep base
-and attempt paths on NFS to avoid exhausting smaller host root filesystems.
+directory for every guest. Never boot a shared writable golden disk. Keep the base on NFS. Each attempt uses a small local QCOW2 overlay, with the
+golden data disk mounted read-only. At least 10 GiB free space is required; the
+launcher stops if the remaining reserve falls below 2 GiB.
 Configure the dedicated cache directories for the export's mapped identities;
 sticky directories can prevent cleanup when the server remaps numeric UIDs.
 The launcher preserves NFS ownership mapping instead of attempting local-host
@@ -129,8 +130,9 @@ just --justfile windows/justfile run \
   --input /work/admitted-input --work "$WINDOWS_NFS_CACHE/attempts/unique-reservation" --timeout 3600
 ```
 
-The launcher verifies the base receipt and makes a disposable storage copy.
-The base is never mounted into the running VM. Collect `shared/output` for QEMU
+The launcher verifies the base receipt and creates a disposable local QCOW2
+overlay. The base storage is mounted read-only at `/base`; mutable EFI state is
+copied into the attempt directory. Collect `shared/output` for QEMU
 logs, driver discovery, the task transcript, its exit receipt and task-specific
 evidence. A missing marker, deadline, failed task or failed teardown fails the run.
 The caller may delete the disposable work directory only after collecting evidence
@@ -141,3 +143,30 @@ and restoring the GPU. Preserve the golden base and its receipt for reuse.
 `just --justfile windows/justfile check` exercises device admission, mount scope,
 failed-guest cleanup and base tamper detection offline. The repository's existing
 test runner includes this suite. These tests do not claim hardware qualification.
+
+## Install host recovery
+
+`host.py` and `install-host.sh` supply the Linux host lifecycle helper. Install
+from a reviewed checkout as root, passing an operator-owned JSON configuration
+and the exact launcher image ID used to prepare the base:
+
+```sh
+bash windows/install-host.sh /private/host.json "$image"
+```
+
+The JSON contains `backend`, the approved `gpu` PCI address, enrolled `job_user`
+and numeric `job_uid`, `job_home`, `jy_binary`, `jy_config`, and
+`github_busy_marker`. Keep this host-specific configuration outside Git. The
+installer creates `/usr/local/bin/mesh-windows-host` and a root systemd recovery
+timer. The wrapper uses the host's existing Docker administration capability;
+Windows guests still receive only explicit KVM/VFIO devices.
+
+Acquisition verifies the connected single-slot scheduler and the current native
+reservation or accepted GitHub worker, journals original bindings, then persists
+`jy off` before stopping display services and assigning VFIO. A 2-hour lease and
+owner PID/start-time/boot identity let the independent timer recover abandoned
+allocations. Recovery stops only containers labeled for that lease, restores
+bindings and display services, and verifies native GPU discovery before `jy on`.
+Intervening operator configuration changes or restoration failures preserve
+quarantine. The root journal survives job cancellation and reboot. Physical
+passthrough, reset and recovery still require qualification on each host type.
