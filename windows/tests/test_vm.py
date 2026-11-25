@@ -1,4 +1,5 @@
 import importlib.util
+import argparse
 import json
 import subprocess
 import tempfile
@@ -64,6 +65,17 @@ class PassthroughPolicy(unittest.TestCase):
 
 
 class GuestLifecycle(unittest.TestCase):
+    def test_cached_base_without_current_bootstrap_cannot_boot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'base.json').write_text(json.dumps({'schema': 1}))
+            args = argparse.Namespace(lease='reservation', backend='cuda', gpu='0000:01:00.0', base=root)
+            with patch.object(vm, 'gpu_devices', return_value=('12', ['0000:01:00.0'])), \
+                    patch.object(vm, 'docker') as docker:
+                with self.assertRaisesRegex(ValueError, 'bootstrap differs'):
+                    vm.run(args)
+            docker.assert_not_called()
+
     def test_overlay_never_copies_the_golden_data_disk(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

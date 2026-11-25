@@ -15,6 +15,8 @@ from vm import sha256, storage_manifest
 
 
 def publish(source, target, work_root):
+    if target.exists():
+        raise ValueError('refusing to replace a published base')
     source = source.resolve(strict=True)
     receipt = json.loads((source / 'base.json').read_text())
     if receipt.get('schema') != 1 or storage_manifest(source / 'storage') != receipt.get('files'):
@@ -22,8 +24,6 @@ def publish(source, target, work_root):
     image = receipt['launcher_image']
     if not re.fullmatch(r'sha256:[a-f0-9]{64}', image):
         raise ValueError('source must identify the exact prepared launcher image')
-    if target.exists():
-        raise ValueError('refusing to replace a published base')
     filesystem = subprocess.check_output(['findmnt', '--noheadings', '--output', 'FSTYPE', '--target', str(target.parent)], text=True).split()
     if set(filesystem) - {'autofs'} not in ({'nfs'}, {'nfs4'}):
         raise ValueError('publication target must be on mounted NFS')

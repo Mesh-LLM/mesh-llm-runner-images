@@ -16,10 +16,18 @@ if ((Get-FileHash $driver -Algorithm SHA256).Hash.ToLowerInvariant() -ne $profil
 if ((Get-AuthenticodeSignature $driver).Status -ne 'Valid') { throw 'Windows GPU driver signature is invalid' }
 $stamp = 'C:\MeshWindows\driver-installed.txt'
 if (-not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $profile.sha256) {
+    # Vendor self-extractors must execute from the guest's local disk. Network
+    # execution can wait on Windows trust prompts or lose its extraction path.
+    $localDriver = "C:\MeshWindows\driver-$($profile.sha256).exe"
+    Copy-Item -LiteralPath $driver -Destination $localDriver -Force
+    if ((Get-FileHash $localDriver -Algorithm SHA256).Hash.ToLowerInvariant() -ne $profile.sha256) {
+        throw 'Local GPU installer checksum mismatch'
+    }
     $arguments = if ($profile.backend -eq 'cuda') { '-s -noreboot' } else { '-INSTALL' }
-    $process = Start-Process -FilePath $driver -ArgumentList $arguments -Wait -PassThru
+    $process = Start-Process -FilePath $localDriver -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -notin @(0, 3010)) { throw "GPU driver installer exited $($process.ExitCode)" }
     Set-Content $stamp $profile.sha256
+    Remove-Item -LiteralPath $localDriver
     # Reboot once even when the vendor returns 0: enumeration and its kernel
     # driver must be settled before the smoke starts.
     exit 3010
