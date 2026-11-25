@@ -44,7 +44,22 @@ def gpu_devices(backend, bdf, *, sysfs=Path("/sys"), require_vfio=True):
     group = gpu / "iommu_group"
     if not group.is_symlink():
         raise ValueError("GPU has no IOMMU group")
+    groups = {group.resolve().name}
     devices = sorted((group / "devices").iterdir())
+    # Integrated graphics can isolate its HDMI audio function in a separate
+    # group. Admit only the same slot's vendor-matched audio function, and
+    # require that group's complete isolation too.
+    audio = gpu.parent / (bdf[:-1] + "1")
+    if (read(audio / "class") == "0x040300" and
+            read(audio / "vendor") == VENDORS[backend] and audio.name not in {device.name for device in devices}):
+        audio_group = audio / "iommu_group"
+        if not audio_group.is_symlink():
+            raise ValueError("GPU audio has no IOMMU group")
+        audio_devices = sorted((audio_group / "devices").iterdir())
+        if [device.name for device in audio_devices] != [audio.name]:
+            raise ValueError("GPU audio group contains an unrelated device")
+        groups.add(audio_group.resolve().name)
+        devices.extend(audio_devices)
     for device in devices:
         kind = read(device / "class") or ""
         if not (kind.startswith("0x03") or kind == "0x040300"):
@@ -54,7 +69,7 @@ def gpu_devices(backend, bdf, *, sysfs=Path("/sys"), require_vfio=True):
         driver = device / "driver"
         if require_vfio and (not driver.is_symlink() or driver.resolve().name != "vfio-pci"):
             raise ValueError(f"{device.name} is not bound to vfio-pci; host lifecycle preparation is required")
-    return group.resolve().name, [device.name for device in devices]
+    return sorted(groups), sorted({device.name for device in devices})
 
 
 def doctor(args):
@@ -89,8 +104,8 @@ def restore_ownership(image, shared):
            "-R", f"{os.getuid()}:{os.getgid()}", "/work", stdout=subprocess.DEVNULL)
 
 
-def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None, rom=None, rom_device=None):
-    if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso, base, rom] if path is not None):
+def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None, rom=None, rom_device=None, audio_rom=None):
+    if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso, base, rom, audio_rom] if path is not None):
         raise ValueError("Docker mount paths cannot contain commas or newlines")
     args = ["--user", "0", "--device", "/dev/kvm", "--device", "/dev/net/tun", "--cap-add", "NET_ADMIN",
             "--cpus", str(cpus), "--memory", f"{memory + 2}g", "--pids-limit", "1024",
@@ -111,11 +126,20 @@ def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), gr
         if rom_device not in devices:
             raise ValueError("ROM must belong to the assigned GPU")
         args += ["--mount", f"type=bind,src={rom},dst=/rom/vbios.rom,readonly"]
+    audio_device = rom_device[:-1] + "1" if rom_device else None
+    if audio_rom:
+        if not rom or audio_device not in devices:
+            raise ValueError("audio ROM requires the assigned GPU ROM and paired audio function")
+        args += ["--mount", f"type=bind,src={audio_rom},dst=/rom/audio.rom,readonly"]
     if devices:
-        args += ["--device", "/dev/vfio/vfio", "--device", f"/dev/vfio/{group}",
+        args += ["--device", "/dev/vfio/vfio"]
+        for number in group:
+            args += ["--device", f"/dev/vfio/{number}"]
+        args += [
                  "--ulimit", "memlock=-1:-1",
                  "--env", "ARGUMENTS=" + " ".join(
                      f"-device vfio-pci,host={device}" + (",romfile=/rom/vbios.rom" if rom and device == rom_device else "")
+                     + (",romfile=/rom/audio.rom" if audio_rom and device == audio_device else "")
                      for device in devices)]
     return [*args, image]
 
@@ -232,6 +256,7 @@ def run(args):
     if not args.lease:
         raise ValueError("the caller must supply its exclusive host reservation identity")
     rom = admit_rom(args.rom, args.rom_sha256)
+    audio_rom = admit_rom(args.audio_rom, args.audio_rom_sha256)
     group, devices = gpu_devices(args.backend, args.gpu)
     base = args.base.resolve(strict=True)
     receipt = json.loads((base / "base.json").read_text())
@@ -261,13 +286,13 @@ def run(args):
     (shared / "input/guest.json").write_text(json.dumps({"schema": 1, "files": guest_files}))
     result = shared / "output/result.json"
     execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group,
-               base=base / "storage", lease=args.lease, rom=rom, rom_device=args.gpu)
+               base=base / "storage", lease=args.lease, rom=rom, rom_device=args.gpu, audio_rom=audio_rom)
     value = json.loads(result.read_text(encoding="utf-8-sig"))
     if value.get("schema") != 1 or type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         raise RuntimeError(f"Windows task failed: {value}")
     print(json.dumps({"schema": 1, "backend": args.backend, "gpu": args.gpu,
                       "lease": args.lease, "base_receipt_sha256": sha256(base / "base.json"),
-                      "rom_sha256": args.rom_sha256, "result": value}))
+                      "rom_sha256": args.rom_sha256, "audio_rom_sha256": args.audio_rom_sha256, "result": value}))
 
 
 def main():
@@ -293,6 +318,8 @@ def main():
             action.add_argument("--lease", required=True)
             action.add_argument("--rom", type=Path, help="operator-supplied GPU option ROM")
             action.add_argument("--rom-sha256", help="SHA-256 of the supplied GPU option ROM")
+            action.add_argument("--audio-rom", type=Path, help="supplied UEFI graphics ROM for the paired audio function")
+            action.add_argument("--audio-rom-sha256", help="SHA-256 of the supplied audio-function ROM")
     args = parser.parse_args()
     if hasattr(args, "image") and not re.fullmatch(r"(?:[^\s]+@)?sha256:[a-f0-9]{64}", args.image):
         raise ValueError("--image must be a digest reference or full sha256 Docker image ID")

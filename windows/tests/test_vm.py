@@ -37,7 +37,27 @@ class PassthroughPolicy(unittest.TestCase):
 
     def test_allows_gpu_and_audio_in_one_group(self):
         self.device("0000:01:00.1", "0x040300", "0x10de")
-        self.assertEqual(self.inspect(), ("12", ["0000:01:00.0", "0000:01:00.1"]))
+        self.assertEqual(self.inspect(), (["12"], ["0000:01:00.0", "0000:01:00.1"]))
+
+    def separate_audio(self):
+        audio = self.device("0000:01:00.1", "0x040300", "0x10de")
+        (self.group / 'devices' / audio.name).unlink()
+        (audio / 'iommu_group').unlink()
+        group = self.root / 'kernel/iommu_groups/20'
+        (group / 'devices').mkdir(parents=True)
+        (audio / 'iommu_group').symlink_to(group)
+        (group / 'devices' / audio.name).symlink_to(audio)
+        return group
+
+    def test_includes_isolated_paired_audio_group(self):
+        self.separate_audio()
+        self.assertEqual(self.inspect(), (["12", "20"], ["0000:01:00.0", "0000:01:00.1"]))
+
+    def test_rejects_unrelated_device_in_paired_audio_group(self):
+        group = self.separate_audio()
+        (group / 'devices/0000:01:00.2').symlink_to(self.gpu)
+        with self.assertRaisesRegex(ValueError, 'audio group contains an unrelated'):
+            self.inspect()
 
     def test_rejects_unrelated_device(self):
         self.device("0000:01:00.2", "0x0c0330", "0x10de")
@@ -69,7 +89,7 @@ class GuestLifecycle(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'base.json').write_text(json.dumps({'schema': 1}))
-            args = argparse.Namespace(lease='reservation', backend='cuda', gpu='0000:01:00.0', base=root, rom=None, rom_sha256=None)
+            args = argparse.Namespace(lease='reservation', backend='cuda', gpu='0000:01:00.0', base=root, rom=None, rom_sha256=None, audio_rom=None, audio_rom_sha256=None)
             with patch.object(vm, 'gpu_devices', return_value=('12', ['0000:01:00.0'])), \
                     patch.object(vm, 'docker') as docker:
                 with self.assertRaisesRegex(ValueError, 'bootstrap differs'):
@@ -85,7 +105,7 @@ class GuestLifecycle(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 vm.admit_rom(path, '0' * 64)
             args = vm.container_args('image', Path('/storage'), Path('/shared'),
-                                     devices=['0000:c2:00.0'], group='19', rom=path, rom_device='0000:c2:00.0')
+                                     devices=['0000:c2:00.0'], group=['19'], rom=path, rom_device='0000:c2:00.0')
             self.assertIn(f'type=bind,src={path},dst=/rom/vbios.rom,readonly', args)
             self.assertIn('romfile=/rom/vbios.rom', ' '.join(args))
 
@@ -94,6 +114,18 @@ class GuestLifecycle(unittest.TestCase):
             vm.admit_rom(Path('/missing'), None)
         with self.assertRaisesRegex(ValueError, 'assigned GPU'):
             vm.container_args('image', Path('/storage'), Path('/shared'), rom=Path('/rom'), rom_device='0000:c2:00.0')
+
+    def test_audio_rom_is_read_only_and_requires_paired_audio(self):
+        options = dict(devices=['0000:c2:00.0', '0000:c2:00.1'], group=['19', '20'],
+                       rom=Path('/gpu.rom'), rom_device='0000:c2:00.0', audio_rom=Path('/gop.rom'))
+        args = vm.container_args('image', Path('/storage'), Path('/shared'), **options)
+        self.assertIn('/dev/vfio/19', args)
+        self.assertIn('/dev/vfio/20', args)
+        self.assertIn('type=bind,src=/gop.rom,dst=/rom/audio.rom,readonly', args)
+        self.assertIn('host=0000:c2:00.1,romfile=/rom/audio.rom', ' '.join(args))
+        options['devices'] = ['0000:c2:00.0']
+        with self.assertRaisesRegex(ValueError, 'paired audio function'):
+            vm.container_args('image', Path('/storage'), Path('/shared'), **options)
 
     def test_overlay_never_copies_the_golden_data_disk(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,7 +151,7 @@ class GuestLifecycle(unittest.TestCase):
         docker.assert_not_called()
 
     def test_limits_devices_and_does_not_publish_ports(self):
-        args = vm.container_args("sha256:" + "a" * 64, Path("/disk"), Path("/shared"), devices=["0000:01:00.0"], group="12")
+        args = vm.container_args("sha256:" + "a" * 64, Path("/disk"), Path("/shared"), devices=["0000:01:00.0"], group=["12"])
         self.assertIn("/dev/vfio/12", args)
         self.assertIn("/dev/kvm", args)
         self.assertNotIn("--privileged", args)

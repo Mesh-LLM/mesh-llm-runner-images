@@ -16,7 +16,9 @@ must pass on the actual hardware before enabling production work.
 The caller must reserve the entire Linux x86_64 host exclusively. KVM and IOMMU
 must be enabled. The selected GPU's complete IOMMU group may contain only display
 and audio functions; primary boot displays and unrelated devices are rejected.
-The host's GPU lifecycle manager must bind that group to `vfio-pci` before `run`,
+The same slot's vendor-matched HDMI audio function is included when it occupies
+its own isolated group. Unrelated devices in that audio group are rejected too.
+The host's GPU lifecycle manager must bind every admitted group to `vfio-pci` before `run`,
 then restore every original host driver after QEMU stops. This launcher deliberately
 does not change PCI bindings, stop the desktop or edit boot configuration.
 
@@ -198,6 +200,11 @@ This also reclaims disk space needed by the scheduler's normal disk reserve.
 A guest can receive a GPU option ROM through `--rom PATH --rom-sha256 SHA256`.
 The launcher verifies its hash and option-ROM header and mounts it read-only.
 Firmware stays in operator storage and is never included in the public image.
+For an APU requiring a separate UEFI graphics driver on its paired audio
+function, supply `--audio-rom PATH --audio-rom-sha256 SHA256` as well. This
+requires both the assigned GPU ROM and its isolated paired audio function;
+the second ROM is also verified and mounted read-only. Operators must admit
+the firmware's provenance and hardware compatibility before use.
 
 For a matching AMD APU image supplied in the current host's ACPI VFCT, run as an
 operator with permission to read that table:
