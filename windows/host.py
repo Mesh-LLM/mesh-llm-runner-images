@@ -226,6 +226,12 @@ def collect_and_remove_work(config, journal):
     shutil.rmtree(work)
 
 
+def bindings_restored(journal):
+    return all((PCI / bdf / 'driver').is_symlink() and
+               (PCI / bdf / 'driver').resolve().name == driver
+               for bdf, driver in journal['bindings'].items())
+
+
 def verify_amd_release(config, journal):
     if config['backend'] != 'rocm' or 'work' not in journal:
         return
@@ -234,14 +240,13 @@ def verify_amd_release(config, journal):
         return
     boot = BOOT_ID.read_text().strip()
     previous_boot = journal.get('owner', {}).get('boot')
-    if previous_boot and previous_boot != boot and all(
-            (PCI / bdf / 'driver').is_symlink() and
-            (PCI / bdf / 'driver').resolve().name == driver
-            for bdf, driver in journal['bindings'].items()):
+    if previous_boot and previous_boot != boot:
         # A host restart can reconcile a quarantined device. Admit it only
         # after its original bindings and native discovery already work.
+        if not bindings_restored(journal):
+            raise RuntimeError('host restarted without original AMD bindings; retain quarantine')
         native_probe(config)
-        return
+        return True
     # An initialized Windows APU must unload before Linux can reclaim it.
     # Blind rebinding can wedge the host; absent proof retains VFIO quarantine.
     path = work / 'shared/output/gpu-release.json'
@@ -251,6 +256,7 @@ def verify_amd_release(config, journal):
     if (not isinstance(value, dict) or value.get('ConfigManagerErrorCode') != 22 or
             not str(value.get('PNPDeviceID', '')).startswith(identity)):
         raise RuntimeError('AMD Windows guest did not confirm device release; retain VFIO quarantine')
+    return True
 
 
 def restore(config, journal):
@@ -261,7 +267,14 @@ def restore(config, journal):
     for container in ids:
         command('docker', 'stop', '--time', '120', container)
         command('docker', 'rm', '--force', container)
-    verify_amd_release(config, journal)
+    if verify_amd_release(config, journal):
+        boot = BOOT_ID.read_text().strip()
+        if journal.get('native_rebind_boot') == boot and not bindings_restored(journal):
+            raise RuntimeError('AMD native rebind already failed on this boot; retain quarantine without retry')
+        # Persist before touching a driver. A timer retry must not repeat a
+        # failed Windows-to-Linux transition, even if its process was killed.
+        journal['native_rebind_boot'] = boot
+        save(STATE / 'active.json', journal)
     for bdf, driver in reversed(list(journal['bindings'].items())):
         command('modprobe', driver)
         set_driver(bdf, driver)

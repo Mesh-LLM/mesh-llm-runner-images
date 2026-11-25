@@ -127,6 +127,45 @@ class Recovery(unittest.TestCase):
         with patch.object(host, 'owner_identity', side_effect=FileNotFoundError):
             self.assertFalse(host.owner_alive({'pid': 22}))
 
+    def test_failed_amd_binding_is_not_retried_by_recovery(self):
+        work = self.root / 'run_test'
+        (work / 'shared/input').mkdir(parents=True)
+        (work / 'shared/output').mkdir()
+        (work / 'shared/input/driver.json').write_text('{}')
+        (work / 'shared/output/gpu-release.json').write_text(json.dumps({
+            'PNPDeviceID': 'PCI\\VEN_1002&DEV_1586', 'ConfigManagerErrorCode': 22}))
+        gpu = self.root / '0000:c2:00.0'
+        gpu.mkdir()
+        (gpu / 'device').write_text('0x1586')
+        self.config.update(backend='rocm', gpu=gpu.name)
+        self.journal.update(work=str(work), owner={'boot': 'current-boot'}, bindings={gpu.name: 'amdgpu'})
+        with patch.object(host, 'STATE', self.root), patch.object(host, 'PCI', self.root), \
+                patch.object(host, 'command', return_value=''), patch.object(host, 'jy') as jy, \
+                patch.object(host, 'set_driver', side_effect=RuntimeError('bind failed')) as bind:
+            with self.assertRaisesRegex(RuntimeError, 'bind failed'):
+                host.restore(self.config, self.journal)
+            saved = json.loads((self.root / 'active.json').read_text())
+            self.assertEqual(saved['native_rebind_boot'], 'current-boot')
+            with self.assertRaisesRegex(RuntimeError, 'without retry'):
+                host.restore(self.config, saved)
+        bind.assert_called_once_with(gpu.name, 'amdgpu')
+        jy.assert_not_called()
+
+    def test_restart_cannot_use_a_previous_boot_guest_receipt(self):
+        work = self.root / 'run_test'
+        (work / 'shared/input').mkdir(parents=True)
+        (work / 'shared/output').mkdir()
+        (work / 'shared/input/driver.json').write_text('{}')
+        (work / 'shared/output/gpu-release.json').write_text(json.dumps({
+            'PNPDeviceID': 'PCI\\VEN_1002&DEV_1586', 'ConfigManagerErrorCode': 22}))
+        self.config.update(backend='rocm', gpu='0000:c2:00.0')
+        self.journal.update(work=str(work), owner={'boot': 'previous-boot'},
+                            bindings={'0000:c2:00.0': 'amdgpu'})
+        with patch.object(host, 'PCI', self.root), patch.object(host, 'native_probe') as probe:
+            with self.assertRaisesRegex(RuntimeError, 'without original AMD bindings'):
+                host.verify_amd_release(self.config, self.journal)
+        probe.assert_not_called()
+
     def test_partial_acquisition_retains_original_bindings_and_quarantine(self):
         self.config_file.write_text('enabled = true\ndrain = false\n')
         gpu = self.root / '0000:01:00.0'

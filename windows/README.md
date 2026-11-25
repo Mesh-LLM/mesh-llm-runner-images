@@ -193,6 +193,9 @@ Missing confirmation retains VFIO quarantine. After a host restart, recovery can
 reconcile that quarantine only when the original bindings and native discovery
 already succeed. This release path still needs hardware validation; initialization
 alone does not establish safe return to Linux.
+The helper journals an AMD native rebind before writing to a driver and refuses
+to repeat a failed transition on the same host boot. A previous boot's guest
+release receipt cannot authorize rebinding after a host restart.
 
 Provisioning and per-run scripts disable automatic Windows updates in disposable
 guests so updates cannot race the supplied vendor installer or replace the
