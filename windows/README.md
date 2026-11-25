@@ -160,7 +160,8 @@ bash windows/install-host.sh /private/host.json "$image"
 
 The JSON contains `backend`, the approved `gpu` PCI address, enrolled `job_user`
 and numeric `job_uid`, `job_home`, `jy_binary`, `jy_config`, and
-`github_busy_marker`. Keep this host-specific configuration outside Git. The
+`github_busy_marker`, approved `work_roots`, and an NFS `evidence_root`. Keep
+this host-specific configuration outside Git. The
 installer creates `/usr/local/bin/mesh-windows-host` and a root systemd recovery
 timer. The wrapper uses the host's existing Docker administration capability;
 Windows guests still receive only explicit KVM/VFIO devices.
@@ -185,3 +186,9 @@ after the driver's reboot.
 For hosts with limited local space, configure the attempt directory on NFS.
 Windows vendor installation can create substantially more writes than the final
 installed driver occupies; the disk reserve remains enforced on either filesystem.
+
+Pass `--work "$work"` to host acquisition for each VM. The path must be a fresh
+lease-named directory under an approved scratch root. Recovery retains
+`shared/output` under the NFS evidence root and deletes that lease directory
+before resuming scheduler admission, including when the original job was killed.
+This also reclaims disk space needed by the scheduler's normal disk reserve.

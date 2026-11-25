@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -47,11 +48,14 @@ def jy(config, action):
                    'HOME=' + config['job_home'], config['jy_binary'], action)
 
 
-def owner_identity(pid):
-    root = Path('/proc') / str(pid)
+def owner_identity(pid, proc=Path('/proc')):
+    root = proc / str(pid)
+    fields = (root / 'stat').read_text().rsplit(')', 1)[1].split()
+    if fields[0] in ('Z', 'X', 'x'):
+        raise ProcessLookupError('reservation owner has exited')
     # Start ticks distinguish a surviving owner from a recycled PID.
-    return {'pid': pid, 'start': (root / 'stat').read_text().rsplit(')', 1)[1].split()[19],
-            'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+    return {'pid': pid, 'start': fields[19],
+            'boot': (proc / 'sys/kernel/random/boot_id').read_text().strip()}
 
 
 def owner_alive(owner):
@@ -157,6 +161,12 @@ def acquire(config, args):
     if not re.search(r'^enabled\s*=\s*true\s*$', settings, re.MULTILINE) or re.search(r'^drain\s*=\s*true\s*$', settings, re.MULTILINE):
         raise ValueError('scheduler must be enabled and not draining')
     owner = verify_reservation(config, args)
+    work = None
+    if args.work:
+        work = args.work.resolve()
+        roots = [Path(path).resolve() for path in config.get('work_roots', [])]
+        if work.name != args.lease or work.parent not in roots or work.exists():
+            raise ValueError('VM work must be a fresh lease directory under an approved scratch root')
     group, devices = gpu_devices(config['backend'], args.gpu, require_vfio=False)
     native_probe(config)
     bindings = {bdf: (PCI / bdf / 'driver').resolve().name for bdf in devices}
@@ -165,6 +175,8 @@ def acquire(config, args):
     journal = {'schema': 1, 'lease': args.lease, 'gpu': args.gpu, 'group': group,
                'owner': owner, 'deadline': time.time() + 7200, 'bindings': bindings,
                'services': [], 'consoles': [], 'state': 'acquiring'}
+    if work:
+        journal['work'] = str(work)
     save(STATE / 'active.json', journal)
     # Persist scheduler quarantine before the first host/device mutation. The
     # paused setting survives reboot; a job trap is not the recovery mechanism.
@@ -192,6 +204,27 @@ def acquire(config, args):
     return journal
 
 
+def collect_and_remove_work(config, journal):
+    if 'work' not in journal:
+        return
+    work = Path(journal['work'])
+    roots = [Path(path).resolve() for path in config['work_roots']]
+    if work.is_symlink() or work.resolve() != work or work.parent not in roots or work.name != journal['lease']:
+        raise ValueError('refusing cleanup outside this lease\'s approved scratch directory')
+    if not work.exists():
+        return
+    output = work / 'shared/output'
+    if output.exists():
+        if output.is_symlink() or any(p.is_symlink() for p in output.rglob('*')):
+            raise ValueError('refusing symlinks in retained guest evidence')
+        archive = Path(config['evidence_root']) / journal['lease']
+        if archive.is_symlink():
+            raise ValueError('refusing a symlink as the evidence archive')
+        shutil.copytree(output, archive, dirs_exist_ok=True)
+        journal['retained_evidence'] = str(archive)
+    shutil.rmtree(work)
+
+
 def restore(config, journal):
     unchanged = digest(config['jy_config']) == journal.get('paused_config')
     if not unchanged:
@@ -213,6 +246,7 @@ def restore(config, journal):
     # implicitly clearing a newly requested pause/drain or changing quotas.
     if not unchanged:
         raise RuntimeError('scheduler configuration changed; operator reconciliation required')
+    collect_and_remove_work(config, journal)
     journal['state'] = 'restored'
     save(STATE / 'last.json', journal)
     jy(config, 'on')
@@ -228,6 +262,7 @@ def main():
     parser.add_argument('--journal', type=Path)
     parser.add_argument('--owner-pid', type=int)
     parser.add_argument('--backend', choices=['cuda', 'rocm'])
+    parser.add_argument('--work', type=Path)
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise ValueError('host lifecycle operations require the installed root helper')

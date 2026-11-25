@@ -18,7 +18,7 @@ class Recovery(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.config_file = self.root / 'agent.toml'
         self.config_file.write_text('enabled = false\n')
         self.config = {'jy_config': str(self.config_file), 'backend': 'cuda'}
@@ -77,7 +77,7 @@ class Recovery(unittest.TestCase):
         gpu.mkdir()
         (gpu / 'driver').symlink_to('/sys/bus/pci/drivers/nvidia')
         self.config.update(gpu=gpu.name)
-        args = argparse.Namespace(gpu=gpu.name, lease='run_test', owner_pid=22)
+        args = argparse.Namespace(gpu=gpu.name, lease='run_test', owner_pid=22, work=None)
 
         def pause(config, action):
             self.assertEqual(action, 'off')
@@ -100,6 +100,38 @@ class Recovery(unittest.TestCase):
                 host.acquire(self.config, args)
         self.assertTrue((self.root / 'active.json').exists())
         self.assertIn('enabled = false', self.config_file.read_text())
+
+    def test_zombie_owner_is_an_expired_process(self):
+        proc = self.root / 'proc'
+        (proc / '22').mkdir(parents=True)
+        (proc / 'sys/kernel/random').mkdir(parents=True)
+        (proc / 'sys/kernel/random/boot_id').write_text('boot')
+        fields = ['Z', '1'] + ['0'] * 17 + ['1234']
+        (proc / '22/stat').write_text('22 (worker) ' + ' '.join(fields))
+        with self.assertRaises(ProcessLookupError):
+            host.owner_identity(22, proc)
+
+    def test_cleanup_retains_output_before_reclaiming_only_its_lease(self):
+        scratch = self.root / 'scratch'
+        work = scratch / 'run_test'
+        (work / 'shared/output').mkdir(parents=True)
+        (work / 'shared/output/result.json').write_text('evidence')
+        other = scratch / 'run_other'
+        other.mkdir()
+        config = {'work_roots': [str(scratch)], 'evidence_root': str(self.root / 'evidence')}
+        journal = {'work': str(work), 'lease': 'run_test'}
+        host.collect_and_remove_work(config, journal)
+        self.assertEqual((self.root / 'evidence/run_test/result.json').read_text(), 'evidence')
+        self.assertFalse(work.exists())
+        self.assertTrue(other.exists())
+
+    def test_cleanup_rejects_a_directory_outside_approved_roots(self):
+        work = self.root / 'run_test'
+        work.mkdir()
+        with self.assertRaisesRegex(ValueError, 'approved scratch'):
+            host.collect_and_remove_work({'work_roots': [str(self.root / 'approved')]},
+                                         {'work': str(work), 'lease': 'run_test'})
+        self.assertTrue(work.exists())
 
 
 if __name__ == '__main__':
