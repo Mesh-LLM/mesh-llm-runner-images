@@ -94,6 +94,15 @@ class MediaCache(unittest.TestCase):
                 media.admit(self.args)
         self.assertFalse(self.args.cache.exists())
 
+    def test_automount_stub_requires_a_real_nfs_mount(self):
+        self.args.require_nfs = True
+        for filesystem in ["autofs\n", "autofs\next4\n", "nfs\next4\n"]:
+            with patch.object(media.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, filesystem, "")):
+                with self.assertRaisesRegex(ValueError, "NFS"):
+                    media.admit(self.args)
+        with patch.object(media.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "autofs\nnfs\n", "")):
+            self.assertEqual(media.admit(self.args).read_bytes(), self.payload)
+
     def test_second_lab_can_admit_the_same_bytes_independently(self):
         first = media.admit(self.args)
         self.args.cache = self.root / "second-lab"

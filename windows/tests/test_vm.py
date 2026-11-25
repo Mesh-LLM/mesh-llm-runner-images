@@ -66,7 +66,7 @@ class PassthroughPolicy(unittest.TestCase):
 class GuestLifecycle(unittest.TestCase):
     def test_nfs_cleanup_does_not_attempt_server_uid_chown(self):
         with patch.object(vm.shutil, "which", return_value="/usr/bin/findmnt"), \
-                patch.object(vm.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nfs\n", "")), \
+                patch.object(vm.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "autofs\nnfs\n", "")), \
                 patch.object(vm, "docker") as docker:
             vm.restore_ownership("image", Path("/nfs/shared"))
         docker.assert_not_called()

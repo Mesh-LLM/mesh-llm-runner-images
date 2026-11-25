@@ -34,7 +34,8 @@ def require_nfs(path):
         parent = parent.parent
     result = subprocess.run(["findmnt", "--noheadings", "--output", "FSTYPE", "--target", str(parent)],
                             check=True, capture_output=True, text=True)
-    if result.stdout.strip() not in ("nfs", "nfs4"):
+    filesystems = set(result.stdout.split()) - {"autofs"}
+    if filesystems not in ({"nfs"}, {"nfs4"}):
         raise ValueError("cache path is not on a mounted NFS filesystem")
 
 

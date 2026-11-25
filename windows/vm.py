@@ -78,11 +78,11 @@ def restore_ownership(image, shared):
         filesystem = subprocess.run(
             ["findmnt", "--noheadings", "--output", "FSTYPE", "--target", str(shared)],
             check=True, capture_output=True, text=True,
-        ).stdout.strip()
+        ).stdout.split()
         # NFS can squash both container root and the caller to a server UID.
         # Chown cannot normalize that mapping and may be rejected by the server.
         # Access and cleanup must use the export's mapped identity instead.
-        if filesystem in ("nfs", "nfs4"):
+        if set(filesystem) - {"autofs"} in ({"nfs"}, {"nfs4"}):
             return
     docker("run", "--rm", "--user", "0", "--network", "none", "--entrypoint", "chown",
            "--mount", f"type=bind,src={shared},dst=/work", image,
