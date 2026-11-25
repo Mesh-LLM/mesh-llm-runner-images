@@ -76,6 +76,8 @@ Configure the dedicated cache directories for the export's mapped identities;
 sticky directories can prevent cleanup when the server remaps numeric UIDs.
 The launcher preserves NFS ownership mapping instead of attempting local-host
 UID restoration with `chown` on the server.
+The pinned upstream driver extraction is also adjusted to use
+`bsdtar --no-same-owner`, so root-owned archive entries do not require NFS chown.
 
 ## Prepare once
 
