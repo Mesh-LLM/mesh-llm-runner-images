@@ -85,8 +85,8 @@ variants are pruned; source archives and the admitted ISO remain unchanged.
 ## Prepare once
 
 Supply the admitted Windows 11 x64 ISO and its trusted SHA-256. The launcher never
-downloads replacement Windows media. Use an NFS filesystem with at least
-64 GiB free, plus room for concurrent copies; Btrfs/XFS reflinks reduce copy cost.
+downloads replacement Windows media. Prepare on a local SSD with at least 64 GiB
+free, then publish the completed base to NFS.
 Windows media and disks remain operator-controlled artifacts.
 
 ```sh
@@ -94,13 +94,17 @@ just --justfile windows/justfile image
 image=$(docker image inspect --format '{{.Id}}' mesh-windows-smoke:local)
 just --justfile windows/justfile prepare \
   --image "$image" --iso "$iso" --iso-sha256 "$WINDOWS_ISO_SHA256" \
-  --work "$WINDOWS_NFS_CACHE/bases/base-v1"
+  --work /var/tmp/windows-base-v1
+just --justfile windows/justfile publish --source /var/tmp/windows-base-v1 \
+  --target "$WINDOWS_NFS_CACHE/bases/base-v1"
 ```
 
 Preparation installs checksum-pinned official Python, Git and Just downloads,
 registers a startup task, emits a success marker and shuts down. Only successful
 preparation writes `base.json`, which records the ISO, tools, launcher and all
-storage-file hashes. The disk itself is never published by this repository.
+storage-file hashes. `publish` compresses the data disk, verifies virtual disk equality and every
+cache byte, then atomically publishes storage, its receipt and the exact launcher
+archive to NFS. The disk itself is never published by this repository.
 
 ## Rehearse a task
 
@@ -170,3 +174,14 @@ bindings and display services, and verifies native GPU discovery before `jy on`.
 Intervening operator configuration changes or restoration failures preserve
 quarantine. The root journal survives job cancellation and reboot. Physical
 passthrough, reset and recovery still require qualification on each host type.
+
+The base pins a small startup bootstrap. Each job supplies checksum-admitted
+`RunTask.ps1` and `InstallDriver.ps1` from the pinned recipe checkout, so a guest
+script fix does not require rebuilding Windows. Changing the bootstrap requires
+a fresh base; incompatible bases fail before boot. PCI detection uses PnP
+entities before vendor installation and requires successful device initialization
+after the driver's reboot.
+
+For hosts with limited local space, configure the attempt directory on NFS.
+Windows vendor installation can create substantially more writes than the final
+installed driver occupies; the disk reserve remains enforced on either filesystem.

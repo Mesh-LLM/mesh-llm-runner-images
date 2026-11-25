@@ -26,7 +26,8 @@ try {
     }
     Copy-Item C:\OEM\RunTask.ps1 "$root\RunTask.ps1" -Force
     Copy-Item C:\OEM\InstallDriver.ps1 "$root\InstallDriver.ps1" -Force
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\MeshWindows\RunTask.ps1'
+    Copy-Item C:\OEM\Bootstrap.ps1 "$root\Bootstrap.ps1" -Force
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\MeshWindows\Bootstrap.ps1'
     $trigger = New-ScheduledTaskTrigger -AtStartup
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 2) -StartWhenAvailable
     Register-ScheduledTask -TaskName 'MeshWindowsTask' -Action $action -Trigger $trigger -Settings $settings -User SYSTEM -RunLevel Highest -Force | Out-Null

@@ -97,7 +97,7 @@ def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), gr
             "--mount", f"type=bind,src={storage},dst=/storage",
             "--mount", f"type=bind,src={shared},dst=/shared",
             "--env", f"RAM_SIZE={memory}G", "--env", f"CPU_CORES={cpus}",
-            "--env", "DISK_SIZE=64G", "--env", "VERSION=11e", "--env", "MANUAL=N"]
+            "--env", "DISK_SIZE=64G", "--env", "DISK_FMT=qcow2", "--env", "VERSION=11e", "--env", "MANUAL=N"]
     if oem:
         args += ["--mount", f"type=bind,src={oem},dst=/oem,readonly"]
     if iso:
@@ -203,7 +203,9 @@ def prepare(args):
     if prepared != {"schema": 1, "prepared": True}:
         raise ValueError("invalid Windows preparation marker")
     receipt = {"schema": 1, "launcher_image": args.image, "iso_sha256": args.iso_sha256,
-               "tools_sha256": sha256(ROOT / "tools.json"), "files": storage_manifest(storage)}
+               "tools_sha256": sha256(ROOT / "tools.json"),
+               "guest_bootstrap_sha256": sha256(ROOT / "guest/Bootstrap.ps1"),
+               "files": storage_manifest(storage)}
     (work / "base.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
@@ -213,6 +215,8 @@ def run(args):
     group, devices = gpu_devices(args.backend, args.gpu)
     base = args.base.resolve(strict=True)
     receipt = json.loads((base / "base.json").read_text())
+    if receipt.get("guest_bootstrap_sha256") != sha256(ROOT / "guest/Bootstrap.ps1"):
+        raise ValueError("base bootstrap differs from this recipe; prepare a compatible base")
     if receipt.get("schema") != 1 or receipt.get("files") != storage_manifest(base / "storage"):
         raise ValueError("Windows base disk receipt mismatch")
     if receipt["launcher_image"] != args.image:
@@ -230,6 +234,11 @@ def run(args):
         raise ValueError("guest execution requires at least 10 GiB free space")
     overlay_storage(args.image, base / "storage", storage)
     shutil.copytree(args.input.resolve(strict=True), shared / "input")
+    guest_files = {}
+    for name in ["RunTask.ps1", "InstallDriver.ps1"]:
+        shutil.copyfile(ROOT / "guest" / name, shared / "input" / name)
+        guest_files[name] = sha256(ROOT / "guest" / name)
+    (shared / "input/guest.json").write_text(json.dumps({"schema": 1, "files": guest_files}))
     result = shared / "output/result.json"
     execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group,
                base=base / "storage", lease=args.lease)

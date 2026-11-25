@@ -7,7 +7,7 @@ if ($profile.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid driver SHA-256
 if ($profile.device_id -cnotmatch '^[a-f0-9]{4}$') { throw 'Invalid PCI device identity' }
 $vendor = if ($profile.backend -eq 'cuda') { '10DE' } else { '1002' }
 $identity = "PCI\VEN_$vendor&DEV_$($profile.device_id.ToUpperInvariant())"
-$device = @(Get-CimInstance Win32_VideoController | Where-Object { $_.PNPDeviceID.StartsWith($identity) })
+$device = @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -and $_.PNPDeviceID.StartsWith($identity) })
 if ($device.Count -ne 1) { throw 'Expected physical GPU is absent from the Windows guest' }
 $driver = Join-Path $InputDirectory 'driver.exe'
 if ((Get-FileHash $driver -Algorithm SHA256).Hash.ToLowerInvariant() -ne $profile.sha256) {
@@ -24,7 +24,7 @@ if (-not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $profile.sh
     # driver must be settled before the smoke starts.
     exit 3010
 }
-$device = @(Get-CimInstance Win32_VideoController | Where-Object { $_.PNPDeviceID.StartsWith($identity) })
+$device = @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -and $_.PNPDeviceID.StartsWith($identity) })
 if ($device.Count -ne 1 -or $device[0].ConfigManagerErrorCode -ne 0) {
     throw 'GPU driver did not initialize successfully after reboot'
 }

@@ -12,6 +12,9 @@ cache-iso *args:
 prepare *args:
     python3 {{justfile_directory()}}/vm.py prepare "$@"
 
+publish *args:
+    python3 {{justfile_directory()}}/publish-base.py "$@"
+
 run *args:
     python3 {{justfile_directory()}}/vm.py run "$@"
 

@@ -13,7 +13,7 @@ $exitCode = 1
 $reboot = $false
 Start-Transcript -Path "$output\guest.log" -Force
 try {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'C:\MeshWindows\InstallDriver.ps1' -InputDirectory "$share\input"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$share\input\InstallDriver.ps1" -InputDirectory "$share\input"
     if ($LASTEXITCODE -eq 3010) {
         $reboot = $true
         Restart-Computer -Force
