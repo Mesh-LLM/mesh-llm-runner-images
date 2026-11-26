@@ -251,9 +251,13 @@ def verify_amd_release(config, journal):
     # Blind rebinding can wedge the host; absent proof retains VFIO quarantine.
     path = work / 'shared/output/gpu-release.json'
     value = json.loads(path.read_text(encoding='utf-8-sig')) if path.is_file() else {}
+    result = work / 'shared/output/result.json'
+    finished = json.loads(result.read_text(encoding='utf-8-sig')) if result.is_file() else {}
     device = (PCI / config['gpu'] / 'device').read_text().strip()[2:].upper()
     identity = 'PCI\\VEN_1002&DEV_' + device
-    if (not isinstance(value, dict) or value.get('ConfigManagerErrorCode') != 22 or
+    if (not isinstance(finished, dict) or finished.get('schema') != 1 or
+            type(finished.get('exit_code')) is not int or
+            not isinstance(value, dict) or value.get('ConfigManagerErrorCode') != 22 or
             not str(value.get('PNPDeviceID', '')).startswith(identity)):
         raise RuntimeError('AMD Windows guest did not confirm device release; retain VFIO quarantine')
     return True

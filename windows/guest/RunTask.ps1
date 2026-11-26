@@ -72,6 +72,9 @@ try {
         -CancellationPath "$share\input\cancel.request" -LogPrefix "$output\driver"
     if ($driverExit -eq 3010) {
         Stop-AssignedGpu
+        # The next boot can enable the device before this script starts again.
+        # A cancellation in that window must not trust this boot's unload proof.
+        if (Test-Path "$output\gpu-release.json") { Remove-Item "$output\gpu-release.json" -Force }
         $reboot = $true
         Restart-Computer -Force
         exit 3010

@@ -199,11 +199,13 @@ grace period; missing AMD release proof still retains VFIO quarantine.
 ROCm guests place the paired functions on one multifunction PCIe root port.
 Before shutdown or a requested reboot, the guest unloads its assigned AMD GPU
 and records Windows device error 22 (disabled). Host recovery requires that
-matching release receipt before binding an AMD Windows allocation back to Linux.
+matching release receipt and the final task exit receipt before binding an AMD
+Windows allocation back to Linux. The guest invalidates unload proof before a
+requested reboot, since the driver can start before the next bootstrap invocation.
 Missing confirmation retains VFIO quarantine. After a host restart, recovery can
 reconcile that quarantine only when the original bindings and native discovery
-already succeed. This release path still needs hardware validation; initialization
-alone does not establish safe return to Linux.
+already succeed. Qualification requires actual normal and cancelled device cycles;
+initialization alone does not establish safe return to Linux.
 The helper journals an AMD native rebind before writing to a driver and refuses
 to repeat a failed transition on the same host boot. A previous boot's guest
 release receipt cannot authorize rebinding after a host restart.

@@ -75,12 +75,18 @@ class Recovery(unittest.TestCase):
         self.config.update(backend='rocm', gpu=gpu.name)
         self.journal['work'] = str(work)
         receipt = work / 'shared/output/gpu-release.json'
+        result = work / 'shared/output/result.json'
         with patch.object(host, 'PCI', self.root):
+            result.write_text(json.dumps({'schema': 1, 'exit_code': 0}))
             receipt.write_text(json.dumps({'PNPDeviceID': 'PCI\\VEN_1002&DEV_9999', 'ConfigManagerErrorCode': 22}))
             with self.assertRaisesRegex(RuntimeError, 'retain VFIO quarantine'):
                 host.verify_amd_release(self.config, self.journal)
             receipt.write_text(json.dumps({'PNPDeviceID': 'PCI\\VEN_1002&DEV_1586&SUBSYS_test', 'ConfigManagerErrorCode': 22}))
             host.verify_amd_release(self.config, self.journal)
+            # A reboot can leave an unload receipt but no completed task receipt.
+            result.unlink()
+            with self.assertRaisesRegex(RuntimeError, 'retain VFIO quarantine'):
+                host.verify_amd_release(self.config, self.journal)
 
     def test_host_restart_requires_already_restored_bindings_and_native_discovery(self):
         work = self.root / 'run_test'
@@ -153,6 +159,7 @@ class Recovery(unittest.TestCase):
         (work / 'shared/input').mkdir(parents=True)
         (work / 'shared/output').mkdir()
         (work / 'shared/input/driver.json').write_text('{}')
+        (work / 'shared/output/result.json').write_text('{"schema":1,"exit_code":1}')
         (work / 'shared/output/gpu-release.json').write_text(json.dumps({
             'PNPDeviceID': 'PCI\\VEN_1002&DEV_1586', 'ConfigManagerErrorCode': 22}))
         gpu = self.root / '0000:c2:00.0'
