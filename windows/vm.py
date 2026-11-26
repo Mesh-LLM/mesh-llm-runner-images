@@ -173,12 +173,36 @@ def execute_vm(image, storage, shared, marker, timeout, **kwargs):
             # Complete teardown before returning the allocation to the caller.
             # Never declare a VM successful while its QEMU process is still live.
             try:
+                request_guest_cancel(shared)
                 docker("stop", "--time", "120", name, stdout=subprocess.DEVNULL)
                 with log.open("wb") as stream:
                     docker("logs", name, stdout=stream, stderr=subprocess.STDOUT)
             finally:
                 docker("rm", "--force", name, stdout=subprocess.DEVNULL)
                 restore_ownership(image, shared)
+
+
+def request_guest_cancel(shared, timeout=90):
+    if not (shared / 'input/driver.json').is_file() or (shared / 'output/result.json').exists():
+        return
+    try:
+        profile = json.loads((shared / 'input/driver.json').read_text())
+    except (OSError, ValueError):
+        # Teardown still runs; the separate AMD release check retains quarantine.
+        print('Could not read the guest cancellation profile', file=sys.stderr)
+        return
+    if not isinstance(profile, dict) or profile.get('backend') != 'rocm':
+        return
+    try:
+        (shared / 'input/cancel.request').write_text('cancel\n')
+    except OSError:
+        print('Could not request guest cancellation; retain AMD release guard', file=sys.stderr)
+        return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if (shared / 'output/result.json').is_file():
+            return
+        time.sleep(1)
 
 
 def storage_manifest(storage):
@@ -283,7 +307,7 @@ def run(args):
     overlay_storage(args.image, base / "storage", storage)
     shutil.copytree(args.input.resolve(strict=True), shared / "input")
     guest_files = {}
-    for name in ["RunTask.ps1", "InstallDriver.ps1"]:
+    for name in ["RunTask.ps1", "InstallDriver.ps1", "GuestTask.ps1"]:
         shutil.copyfile(ROOT / "guest" / name, shared / "input" / name)
         guest_files[name] = sha256(ROOT / "guest" / name)
     shutil.copyfile(ROOT / "tools.json", shared / "input/tools.json")

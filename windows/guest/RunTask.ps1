@@ -41,6 +41,11 @@ try {
     Copy-Item 'C:\MeshWindows\Python\python.exe' 'C:\MeshWindows\Python\python3.exe' -Force
     # Existing admitted bases predate jq, which the shared CI planner requires.
     $guest = Get-Content "$share\input\guest.json" -Raw | ConvertFrom-Json
+    $childRunner = "$share\input\GuestTask.ps1"
+    if ((Get-FileHash $childRunner -Algorithm SHA256).Hash.ToLowerInvariant() -cne $guest.files.'GuestTask.ps1') {
+        throw 'Guest child runner checksum mismatch'
+    }
+    . $childRunner
     $toolsFile = "$share\input\tools.json"
     if ((Get-FileHash $toolsFile -Algorithm SHA256).Hash.ToLowerInvariant() -cne $guest.files.'tools.json') {
         throw 'Guest tool pins checksum mismatch'
@@ -62,18 +67,20 @@ try {
     $jqPath = 'C:\MeshWindows\Tools\jq.exe'
     & $jqPath --version
     if ($LASTEXITCODE -ne 0) { throw 'Windows jq preflight failed' }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$share\input\InstallDriver.ps1" -InputDirectory "$share\input"
-    if ($LASTEXITCODE -eq 3010) {
+    $driverExit = Invoke-GuestTask -ScriptPath "$share\input\InstallDriver.ps1" `
+        -ScriptArguments @('-InputDirectory', "$share\input") `
+        -CancellationPath "$share\input\cancel.request" -LogPrefix "$output\driver"
+    if ($driverExit -eq 3010) {
         Stop-AssignedGpu
         $reboot = $true
         Restart-Computer -Force
         exit 3010
     }
-    if ($LASTEXITCODE -ne 0) { throw "Driver initialization exited $LASTEXITCODE" }
+    if ($driverExit -ne 0) { throw "Driver initialization exited $driverExit" }
     # The caller supplies one task from its admitted immutable source. Child
     # process exit is explicit; PowerShell's nonterminating errors cannot pass.
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$share\input\task.ps1"
-    $exitCode = $LASTEXITCODE
+    $exitCode = Invoke-GuestTask -ScriptPath "$share\input\task.ps1" `
+        -CancellationPath "$share\input\cancel.request" -LogPrefix "$output\task"
 } catch {
     Write-Output $_
 } finally {

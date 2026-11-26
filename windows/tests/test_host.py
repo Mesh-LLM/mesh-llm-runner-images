@@ -127,6 +127,27 @@ class Recovery(unittest.TestCase):
         with patch.object(host, 'owner_identity', side_effect=FileNotFoundError):
             self.assertFalse(host.owner_alive({'pid': 22}))
 
+    def test_owner_recovery_requests_guest_unload_before_stopping_vm(self):
+        calls = []
+        work = self.root / 'run_test'
+        self.config['backend'] = 'rocm'
+        self.journal['work'] = str(work)
+
+        def command(*args, **kwargs):
+            calls.append(args)
+            return 'owned\n' if args[:3] == ('docker', 'ps', '-aq') else ''
+
+        with patch.object(host, 'command', command), \
+                patch.object(host, 'request_guest_cancel', side_effect=lambda path: calls.append(('cancel', path))), \
+                patch.object(host, 'verify_amd_release', side_effect=RuntimeError('retain quarantine')), \
+                patch.object(host, 'set_driver') as bind, patch.object(host, 'jy') as jy:
+            with self.assertRaisesRegex(RuntimeError, 'retain quarantine'):
+                host.restore(self.config, self.journal)
+        self.assertLess(calls.index(('cancel', work / 'shared')),
+                        calls.index(('docker', 'stop', '--time', '120', 'owned')))
+        bind.assert_not_called()
+        jy.assert_not_called()
+
     def test_failed_amd_binding_is_not_retried_by_recovery(self):
         work = self.root / 'run_test'
         (work / 'shared/input').mkdir(parents=True)

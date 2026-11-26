@@ -190,6 +190,12 @@ base, and preflights it before invoking the caller's task. Newly prepared bases
 include the same pinned binary. Python's `python3.exe` alias and jq are available
 to the shared Just/Git Bash CI commands.
 
+Cancellation requests a cooperative guest stop before VM teardown. The guest
+terminates only its admitted child process tree, then unloads the AMD GPU and
+records its release receipt. The independent host recovery service makes the
+same request when the caller disappears. A nonresponsive guest has a bounded
+grace period; missing AMD release proof still retains VFIO quarantine.
+
 ROCm guests place the paired functions on one multifunction PCIe root port.
 Before shutdown or a requested reboot, the guest unloads its assigned AMD GPU
 and records Windows device error 22 (disabled). Host recovery requires that

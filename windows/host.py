@@ -12,7 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from vm import gpu_devices
+from vm import gpu_devices, request_guest_cancel
 
 STATE = Path('/var/lib/mesh-windows')
 CONFIG = Path('/etc/mesh-windows/host.json')
@@ -264,6 +264,8 @@ def restore(config, journal):
     if not unchanged:
         jy(config, 'off')
     ids = command('docker', 'ps', '-aq', '--filter', 'label=mesh.windows.lease=' + journal['lease']).split()
+    if ids and config['backend'] == 'rocm' and journal.get('work'):
+        request_guest_cancel(Path(journal['work']) / 'shared')
     for container in ids:
         command('docker', 'stop', '--time', '120', container)
         command('docker', 'rm', '--force', container)

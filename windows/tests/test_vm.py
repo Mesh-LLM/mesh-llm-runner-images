@@ -85,6 +85,35 @@ class PassthroughPolicy(unittest.TestCase):
 
 
 class GuestLifecycle(unittest.TestCase):
+    def test_cancellation_waits_for_guest_completion_before_teardown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shared = Path(tmp)
+            (shared / 'input').mkdir()
+            (shared / 'output').mkdir()
+            (shared / 'input/driver.json').write_text(json.dumps({'backend': 'rocm'}))
+
+            def finish(_):
+                self.assertEqual((shared / 'input/cancel.request').read_text(), 'cancel\n')
+                (shared / 'output/result.json').write_text('{"exit_code":1}')
+
+            with patch.object(vm.time, 'sleep', side_effect=finish):
+                vm.request_guest_cancel(shared)
+            self.assertTrue((shared / 'output/result.json').is_file())
+            (shared / 'input/cancel.request').unlink()
+            vm.request_guest_cancel(shared)
+            self.assertFalse((shared / 'input/cancel.request').exists())
+
+    def test_cancellation_grace_is_bounded_when_guest_does_not_cooperate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shared = Path(tmp)
+            (shared / 'input').mkdir()
+            (shared / 'input/driver.json').write_text(json.dumps({'backend': 'rocm'}))
+            with patch.object(vm.time, 'monotonic', side_effect=[0, 1, 91]), \
+                    patch.object(vm.time, 'sleep'):
+                vm.request_guest_cancel(shared)
+            self.assertTrue((shared / 'input/cancel.request').is_file())
+            self.assertFalse((shared / 'output/result.json').exists())
+
     def test_task_receives_current_tool_pins_with_compatible_existing_base(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

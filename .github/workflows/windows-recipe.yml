@@ -41,3 +41,6 @@ jobs:
               throw "Invalid immutable tool download: $($tool.filename)"
             }
           }
+      - name: Exercise guest task cancellation and process-tree scope
+        shell: powershell
+        run: ./windows/tests/guest-task-contract.ps1
