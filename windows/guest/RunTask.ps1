@@ -6,7 +6,7 @@ while (-not (Test-Path "$share\input\task.ps1")) {
     if ((Get-Date) -gt $deadline) { exit 1 }
     Start-Sleep -Seconds 2
 }
-$env:PATH = "C:\MeshWindows\Python;C:\MeshWindows\Git\cmd;C:\MeshWindows\Git\bin;C:\MeshWindows\Just;$env:PATH"
+$env:PATH = "C:\MeshWindows\Python;C:\MeshWindows\Git\cmd;C:\MeshWindows\Git\bin;C:\MeshWindows\Just;C:\MeshWindows\Tools;$env:PATH"
 $output = "$share\output"
 New-Item -ItemType Directory -Force $output | Out-Null
 $exitCode = 1
@@ -39,6 +39,29 @@ try {
     Set-Service wuauserv -StartupType Disabled
     Stop-Service wuauserv -Force
     Copy-Item 'C:\MeshWindows\Python\python.exe' 'C:\MeshWindows\Python\python3.exe' -Force
+    # Existing admitted bases predate jq, which the shared CI planner requires.
+    $guest = Get-Content "$share\input\guest.json" -Raw | ConvertFrom-Json
+    $toolsFile = "$share\input\tools.json"
+    if ((Get-FileHash $toolsFile -Algorithm SHA256).Hash.ToLowerInvariant() -cne $guest.files.'tools.json') {
+        throw 'Guest tool pins checksum mismatch'
+    }
+    $tools = Get-Content $toolsFile -Raw | ConvertFrom-Json
+    $jq = @($tools.tools | Where-Object { $_.filename -eq 'jq-windows-amd64.exe' })
+    if ($jq.Count -ne 1) { throw 'Expected one pinned Windows jq tool' }
+    foreach ($tool in @($tools.tools | Where-Object { $_.kind -eq 'file' })) {
+        $directory = Join-Path 'C:\MeshWindows' $tool.directory
+        $target = Join-Path $directory $tool.target
+        New-Item -ItemType Directory -Force $directory | Out-Null
+        if (-not (Test-Path $target)) {
+            Invoke-WebRequest -UseBasicParsing -Uri $tool.url -OutFile $target
+        }
+        if ((Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant() -cne $tool.sha256) {
+            throw "Guest tool checksum mismatch: $($tool.filename)"
+        }
+    }
+    $jqPath = 'C:\MeshWindows\Tools\jq.exe'
+    & $jqPath --version
+    if ($LASTEXITCODE -ne 0) { throw 'Windows jq preflight failed' }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$share\input\InstallDriver.ps1" -InputDirectory "$share\input"
     if ($LASTEXITCODE -eq 3010) {
         Stop-AssignedGpu

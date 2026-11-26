@@ -286,6 +286,8 @@ def run(args):
     for name in ["RunTask.ps1", "InstallDriver.ps1"]:
         shutil.copyfile(ROOT / "guest" / name, shared / "input" / name)
         guest_files[name] = sha256(ROOT / "guest" / name)
+    shutil.copyfile(ROOT / "tools.json", shared / "input/tools.json")
+    guest_files["tools.json"] = sha256(ROOT / "tools.json")
     (shared / "input/guest.json").write_text(json.dumps({"schema": 1, "files": guest_files}))
     result = shared / "output/result.json"
     execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group,

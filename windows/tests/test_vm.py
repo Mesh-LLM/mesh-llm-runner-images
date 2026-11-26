@@ -85,6 +85,39 @@ class PassthroughPolicy(unittest.TestCase):
 
 
 class GuestLifecycle(unittest.TestCase):
+    def test_task_receives_current_tool_pins_with_compatible_existing_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, inputs, work = root / 'base', root / 'input', root / 'attempt'
+            (base / 'storage').mkdir(parents=True)
+            (base / 'storage/data.qcow2').write_bytes(b'admitted-base')
+            inputs.mkdir()
+            (inputs / 'task.ps1').write_text('exit 0')
+            (inputs / 'driver.exe').write_bytes(b'driver')
+            (inputs / 'driver.json').write_text(json.dumps({
+                'backend': 'cuda', 'device_id': '2c02', 'sha256': vm.sha256(inputs / 'driver.exe')}))
+            (base / 'base.json').write_text(json.dumps({
+                'schema': 1, 'launcher_image': 'image', 'files': vm.storage_manifest(base / 'storage'),
+                'tools_sha256': 'old-base-tool-pins',
+                'guest_bootstrap_sha256': vm.sha256(vm.ROOT / 'guest/Bootstrap.ps1')}))
+            args = argparse.Namespace(lease='lease', backend='cuda', gpu='0000:01:00.0',
+                                      base=base, input=inputs, work=work, image='image', timeout=60,
+                                      rom=None, rom_sha256=None, audio_rom=None, audio_rom_sha256=None)
+
+            def execute(image, storage, shared, result, timeout, **kwargs):
+                pins = shared / 'input/tools.json'
+                manifest = json.loads((shared / 'input/guest.json').read_text())
+                self.assertEqual(manifest['files']['tools.json'], vm.sha256(pins))
+                self.assertEqual(pins.read_bytes(), (vm.ROOT / 'tools.json').read_bytes())
+                result.parent.mkdir(exist_ok=True)
+                result.write_text(json.dumps({'schema': 1, 'exit_code': 0}))
+
+            with patch.object(vm, 'gpu_devices', return_value=(['12'], ['0000:01:00.0'])), \
+                    patch.object(vm, 'read', return_value='0x2c02'), \
+                    patch.object(vm.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 100 * 2**30})()), \
+                    patch.object(vm, 'overlay_storage'), patch.object(vm, 'execute_vm', execute):
+                vm.run(args)
+
     def test_cached_base_without_current_bootstrap_cannot_boot(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

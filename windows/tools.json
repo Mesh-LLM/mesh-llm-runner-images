@@ -21,6 +21,22 @@
       "sha256": "759f16fb7aa17c5c8b9594b6d4a8c1a6630dfd042cf2b3ff84841454d3d188dc",
       "kind": "zip",
       "directory": "Just"
+    },
+    {
+      "filename": "jq-windows-amd64.exe",
+      "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe",
+      "sha256": "23cb60a1354eed6bcc8d9b9735e8c7b388cd1fdcb75726b93bc299ef22dd9334",
+      "kind": "file",
+      "directory": "Tools",
+      "target": "jq.exe"
+    },
+    {
+      "filename": "jq-1.8.1-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/jqlang/jq/jq-1.8.1/COPYING",
+      "sha256": "ad2b4a266b2268939c1446979759706077421cf906a203aa188c6f396e8cfd74",
+      "kind": "file",
+      "directory": "Tools/licenses",
+      "target": "jq-COPYING.txt"
     }
   ]
 }

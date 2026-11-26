@@ -19,7 +19,11 @@ try {
         if ((Get-FileHash $download -Algorithm SHA256).Hash.ToLowerInvariant() -ne $tool.sha256) {
             throw "Checksum mismatch for $($tool.filename)"
         }
-        if ($tool.kind -eq 'zip') {
+        if ($tool.kind -eq 'file') {
+            $directory = Join-Path $root $tool.directory
+            New-Item -ItemType Directory -Force $directory | Out-Null
+            Copy-Item $download (Join-Path $directory $tool.target) -Force
+        } elseif ($tool.kind -eq 'zip') {
             Expand-Archive -LiteralPath $download -DestinationPath (Join-Path $root $tool.directory) -Force
         } else {
             if ((Get-AuthenticodeSignature $download).Status -ne 'Valid') {

@@ -179,11 +179,16 @@ quarantine. The root journal survives job cancellation and reboot. Physical
 passthrough, reset and recovery still require qualification on each host type.
 
 The base pins a small startup bootstrap. Each job supplies checksum-admitted
-`RunTask.ps1` and `InstallDriver.ps1` from the pinned recipe checkout, so a guest
+`RunTask.ps1`, `InstallDriver.ps1` and tool pins from the pinned recipe checkout, so a guest
 script fix does not require rebuilding Windows. Changing the bootstrap requires
 a fresh base; incompatible bases fail before boot. PCI detection uses PnP
 entities before vendor installation and requires successful device initialization
 after installation and any vendor-requested reboot.
+
+The task installs checksum-pinned Windows jq when it is absent from an older
+base, and preflights it before invoking the caller's task. Newly prepared bases
+include the same pinned binary. Python's `python3.exe` alias and jq are available
+to the shared Just/Git Bash CI commands.
 
 ROCm guests place the paired functions on one multifunction PCIe root port.
 Before shutdown or a requested reboot, the guest unloads its assigned AMD GPU
