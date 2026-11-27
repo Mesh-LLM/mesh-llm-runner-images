@@ -7,6 +7,7 @@ Copy-Item "$PSScriptRoot\..\guest\TaskProcess.cs" $scratch
 @{files=@{'TaskProcess.cs'=(Get-FileHash "$scratch\TaskProcess.cs" -Algorithm SHA256).Hash.ToLowerInvariant()}} |
     ConvertTo-Json | Set-Content "$scratch\guest.json" -Encoding UTF8
 . "$scratch\GuestTask.ps1"
+Initialize-GuestTaskControl
 $cancel = Join-Path $scratch 'cancel.request'
 $scriptFile = Join-Path $scratch 'task with spaces.ps1'
 $unrelated = $null

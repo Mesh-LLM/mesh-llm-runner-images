@@ -216,7 +216,10 @@ base, and preflights it before invoking the caller's task. Newly prepared bases
 include the same pinned binary. Python's `python3.exe` alias and jq are available
 to the shared Just/Git Bash CI commands.
 
-Cancellation requests a cooperative guest stop before VM teardown. The guest
+Cancellation requests a cooperative guest stop before VM teardown. Each disposable
+guest disables and verifies the SMB directory, file-info and negative lookup
+caches before running a driver or task, so Linux-written control files become
+visible to its Windows poller. The guest
 contains the admitted child in a Windows Job Object before resuming it. Normal
 completion waits for all descendants even when the root exits first; cancellation
 terminates only that job. Only a proven empty process tree permits AMD unload and

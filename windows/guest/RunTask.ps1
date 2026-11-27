@@ -46,6 +46,7 @@ try {
         throw 'Guest child runner checksum mismatch'
     }
     . $childRunner
+    Initialize-GuestTaskControl
     $toolsFile = "$share\input\tools.json"
     if ((Get-FileHash $toolsFile -Algorithm SHA256).Hash.ToLowerInvariant() -cne $guest.files.'tools.json') {
         throw 'Guest tool pins checksum mismatch'

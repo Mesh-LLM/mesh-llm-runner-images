@@ -1,3 +1,15 @@
+function Initialize-GuestTaskControl {
+    # Linux writes cancellation outside SMB. Disable cached metadata and
+    # negative lookups so the wait loop observes that control file.
+    Set-SmbClientConfiguration -DirectoryCacheLifetime 0 -FileInfoCacheLifetime 0 `
+        -FileNotFoundCacheLifetime 0 -Force
+    $cache = Get-SmbClientConfiguration
+    if ($cache.DirectoryCacheLifetime -ne 0 -or $cache.FileInfoCacheLifetime -ne 0 -or
+        $cache.FileNotFoundCacheLifetime -ne 0) {
+        throw 'Guest control requires uncached SMB metadata'
+    }
+}
+
 function Invoke-GuestTask {
     param(
         [Parameter(Mandatory=$true)][string]$ScriptPath,
