@@ -30,36 +30,47 @@ exit 9
         -CancellationPath $cancel -LogPrefix "$scratch\orphan"
     if ($code -ne 9 -or -not (Test-Path $orphanDone)) { throw 'Root exit escaped descendant completion' }
 
-    $grandchildFile = Join-Path $scratch 'grandchild.pid'
-    Set-Content $scriptFile @'
-param([string]$PidFile)
-$process = Start-Process powershell.exe -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 180') -PassThru
-Set-Content $PidFile $process.Id
-Start-Sleep -Seconds 180
-'@
     $unrelated = Start-Process powershell.exe -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 180') -PassThru
-    $publisher = Start-Job -ArgumentList $grandchildFile, $cancel -ScriptBlock {
-        param($ReadyPath, $CancelPath)
-        $deadline = (Get-Date).AddSeconds(20)
-        while (-not (Test-Path $ReadyPath)) {
-            if ((Get-Date) -gt $deadline) { throw 'Child readiness deadline' }
-            Start-Sleep -Milliseconds 100
+    foreach ($exitRoot in @($false, $true)) {
+        $grandchildFile = Join-Path $scratch 'grandchild.pid'
+        Set-Content $scriptFile @'
+param([string]$PidFile, [switch]$ExitRoot)
+$process = Start-Process powershell.exe -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 20') -PassThru
+Set-Content $PidFile $process.Id
+if ($ExitRoot) { exit 9 }
+Start-Sleep -Seconds 20
+'@
+        $publisher = Start-Job -ArgumentList $grandchildFile, $cancel, $exitRoot -ScriptBlock {
+            param($ReadyPath, $CancelPath, $RootExits)
+            $deadline = (Get-Date).AddSeconds(20)
+            while (-not (Test-Path $ReadyPath)) {
+                if ((Get-Date) -gt $deadline) { throw 'Child readiness deadline' }
+                Start-Sleep -Milliseconds 100
+            }
+            if ($RootExits) { Start-Sleep -Seconds 2 }
+            Set-Content $CancelPath 'cancel'
         }
-        Set-Content $CancelPath 'cancel'
+        $arguments = @('-PidFile', $grandchildFile)
+        if ($exitRoot) { $arguments += '-ExitRoot' }
+        $cancelled = $false
+        try {
+            Invoke-GuestTask -ScriptPath $scriptFile -ScriptArguments $arguments `
+                -CancellationPath $cancel -LogPrefix "$scratch\cancel" | Out-Null
+        } catch {
+            if ($_ -notmatch 'Host cancelled') { throw }
+            $cancelled = $true
+        }
+        if (-not $cancelled) { throw "Cancellation did not fail the task (root exited: $exitRoot)" }
+        if ($global:MeshGuestTaskTreeActive) { throw 'Cancelled task retained an active-tree marker' }
+        $grandchildId = [int](Get-Content $grandchildFile -Raw)
+        if (Get-Process -Id $grandchildId -ErrorAction SilentlyContinue) { throw 'A task descendant survived cancellation' }
+        if ($unrelated.HasExited) { throw 'Cancellation stopped an unrelated process' }
+        Stop-Job $publisher
+        Remove-Job $publisher -Force
+        $publisher = $null
+        Remove-Item $grandchildFile, $cancel
+        Write-Output "Guest cancellation passed (root exited: $exitRoot)"
     }
-    $cancelled = $false
-    try {
-        Invoke-GuestTask -ScriptPath $scriptFile -ScriptArguments @('-PidFile', $grandchildFile) `
-            -CancellationPath $cancel -LogPrefix "$scratch\cancel" | Out-Null
-    } catch {
-        if ($_ -notmatch 'Host cancelled') { throw }
-        $cancelled = $true
-    }
-    if (-not $cancelled) { throw 'Cancellation did not fail the child task' }
-    if ($global:MeshGuestTaskTreeActive) { throw 'Cancelled task retained an active-tree marker' }
-    $grandchildId = [int](Get-Content $grandchildFile -Raw)
-    if (Get-Process -Id $grandchildId -ErrorAction SilentlyContinue) { throw 'A task descendant survived cancellation' }
-    if ($unrelated.HasExited) { throw 'Cancellation stopped an unrelated process' }
     Write-Output 'Guest child exit, output, cancellation and process-tree scope passed'
 } finally {
     if ($null -ne $publisher) { Stop-Job $publisher; Remove-Job $publisher -Force }
