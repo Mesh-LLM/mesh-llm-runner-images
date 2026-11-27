@@ -36,6 +36,13 @@ def sha256(path):
     return state.hexdigest()
 
 
+def validate_rocm_slot(devices):
+    if len({device[-1] for device in devices}) != len(devices):
+        raise ValueError('ROCm devices map to duplicate guest PCI function addresses')
+    if any(device[:-1] + '0' not in devices for device in devices):
+        raise ValueError('ROCm devices must include function 0 of their slot')
+
+
 def gpu_devices(backend, bdf, *, sysfs=Path("/sys"), require_vfio=True):
     if not BDF.fullmatch(bdf):
         raise ValueError("GPU must be a complete lowercase PCI address, e.g. 0000:01:00.0")
@@ -70,9 +77,10 @@ def gpu_devices(backend, bdf, *, sysfs=Path("/sys"), require_vfio=True):
         driver = device / "driver"
         if require_vfio and (not driver.is_symlink() or driver.resolve().name != "vfio-pci"):
             raise ValueError(f"{device.name} is not bound to vfio-pci; host lifecycle preparation is required")
-    if backend == 'rocm' and len({device.name[-1] for device in devices}) != len(devices):
-        raise ValueError('ROCm devices map to duplicate guest PCI function addresses')
-    return sorted(groups), sorted({device.name for device in devices})
+    identities = sorted({device.name for device in devices})
+    if backend == 'rocm':
+        validate_rocm_slot(identities)
+    return sorted(groups), identities
 
 
 def doctor(args):
@@ -108,8 +116,8 @@ def restore_ownership(image, shared):
 
 
 def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), group=None, memory=8, cpus=4, base=None, lease=None, rom=None, rom_device=None, audio_rom=None, pcie=False):
-    if pcie and len({device[-1] for device in devices}) != len(devices):
-        raise ValueError('ROCm devices map to duplicate guest PCI function addresses')
+    if pcie:
+        validate_rocm_slot(devices)
     if any("," in str(path) or "\n" in str(path) for path in [storage, shared, oem, iso, base, rom, audio_rom] if path is not None):
         raise ValueError("Docker mount paths cannot contain commas or newlines")
     args = ["--user", "0", "--device", "/dev/kvm", "--device", "/dev/net/tun", "--cap-add", "NET_ADMIN",

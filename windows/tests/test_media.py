@@ -52,7 +52,7 @@ class MediaCache(unittest.TestCase):
                 media.admit(self.args)
         self.source.unlink()
         self.args.source = None
-        with patch.object(media.shutil, 'copyfile') as copy, patch.object(media, 'download') as download:
+        with patch.object(media.shutil, 'copyfileobj') as copy, patch.object(media, 'download') as download:
             destination = media.admit(self.args)
         copy.assert_not_called()
         download.assert_not_called()
@@ -143,6 +143,70 @@ class MediaCache(unittest.TestCase):
             self.assertEqual(original.read(), self.payload[:5])
             self.assertEqual(os.fstat(original.fileno()).st_mode & 0o777, 0o444)
         self.assertEqual(destination.read_bytes(), self.payload)
+
+    def test_writable_partial_resumes_without_duplicating_its_prefix(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        partial.write_bytes(self.payload[:5])
+        identity = partial.stat().st_ino
+        self.args.source = None
+        self.args.url_file = self.root / 'unused-url'
+        def download(_, stream):
+            self.assertEqual(os.fstat(stream.fileno()).st_ino, identity)
+            stream.seek(0, os.SEEK_END)
+            stream.write(self.payload[5:])
+            stream.flush()
+        with patch.object(media.shutil, 'copyfileobj', side_effect=OSError(28, 'no space for a duplicate')) as copy, \
+                patch.object(media, 'download', download):
+            destination = media.admit(self.args)
+        copy.assert_not_called()
+        self.assertEqual(destination.stat().st_ino, identity)
+        self.assertEqual(destination.read_bytes(), self.payload)
+
+    def test_readonly_prefix_descriptor_is_closed_before_resumed_download(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        partial.write_bytes(self.payload[:5])
+        partial.chmod(0o444)
+        self.args.source = None
+        self.args.url_file = self.root / 'unused-url'
+        opened = []
+        fdopen = media.os.fdopen
+        def record(descriptor, mode):
+            stream = fdopen(descriptor, mode)
+            if mode == 'rb':
+                opened.append(stream)
+            return stream
+        def download(_, stream):
+            self.assertTrue(opened)
+            self.assertTrue(all(old.closed for old in opened))
+            stream.seek(0, os.SEEK_END)
+            stream.write(self.payload[5:])
+            stream.flush()
+        with patch.object(media.os, 'fdopen', record), patch.object(media, 'download', download):
+            self.assertEqual(media.admit(self.args).read_bytes(), self.payload)
+
+    def test_reopening_a_writable_partial_cannot_follow_a_replaced_path(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        partial.write_bytes(self.payload[:5])
+        victim = self.root / 'unrelated'
+        victim.write_bytes(b'preserve')
+        victim.chmod(0o444)
+        open_regular = media.open_regular
+        def swap(directory, name, flags, mode=0o600):
+            if name == 'windows11.iso.part' and flags == os.O_RDWR:
+                partial.unlink()
+                partial.symlink_to(victim)
+            return open_regular(directory, name, flags, mode)
+        with patch.object(media, 'open_regular', swap):
+            with self.assertRaises(OSError):
+                media.admit(self.args)
+        self.assertEqual(victim.read_bytes(), b'preserve')
+        self.assertEqual(victim.stat().st_mode & 0o777, 0o444)
 
     def test_path_swap_during_copy_never_redirects_a_staging_write(self):
         victim = self.root / 'unrelated'

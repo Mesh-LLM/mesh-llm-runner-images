@@ -92,6 +92,17 @@ class PassthroughPolicy(unittest.TestCase):
             vm.container_args('image', Path('/disk'), Path('/shared'),
                               devices=[self.gpu.name, '0000:02:00.0'], group=['12'], pcie=True)
 
+    def test_rocm_requires_function_zero_before_native_handoff_or_qemu_arguments(self):
+        (self.group / 'devices' / self.gpu.name).unlink()
+        display = self.device('0000:01:00.2', '0x030000', '0x1002')
+        with self.assertRaisesRegex(ValueError, 'include function 0'):
+            vm.gpu_devices('rocm', display.name, sysfs=self.root, require_vfio=False)
+        with self.assertRaisesRegex(ValueError, 'include function 0'):
+            vm.container_args('image', Path('/disk'), Path('/shared'), devices=[display.name], group=['12'], pcie=True)
+        (self.gpu / 'vendor').write_text('0x1002')
+        (self.group / 'devices' / self.gpu.name).symlink_to(self.gpu)
+        self.assertEqual(vm.gpu_devices('rocm', display.name, sysfs=self.root)[1], [self.gpu.name, display.name])
+
 
 class GuestLifecycle(unittest.TestCase):
     def test_cancellation_waits_for_guest_completion_before_teardown(self):

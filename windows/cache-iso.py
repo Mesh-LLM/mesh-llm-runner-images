@@ -90,6 +90,20 @@ def staging_iso(directory, expected):
         if original and stream_digest(original) == expected:
             yield original, True
             return
+        if original and os.fstat(original.fileno()).st_mode & 0o222:
+            try:
+                descriptor = open_regular(directory, name, os.O_RDWR)
+            except PermissionError:
+                descriptor = None
+            if descriptor is not None:
+                with os.fdopen(descriptor, 'r+b') as stream:
+                    before, writable = os.fstat(original.fileno()), os.fstat(stream.fileno())
+                    if (before.st_dev, before.st_ino) != (writable.st_dev, writable.st_ino):
+                        raise ValueError('ISO staging changed while opening its writable descriptor')
+                    original.close()
+                    original = None
+                    yield stream, False
+                    return
         temporary = '.iso-' + uuid.uuid4().hex
         try:
             with os.fdopen(open_regular(directory, temporary, os.O_CREAT | os.O_EXCL | os.O_RDWR), 'w+b') as stream:
@@ -98,6 +112,8 @@ def staging_iso(directory, expected):
                     # descriptor owns every validation, write and permission change.
                     original.seek(0)
                     shutil.copyfileobj(original, stream)
+                    original.close()
+                    original = None
                 stream.flush()
                 os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
                 yield stream, False

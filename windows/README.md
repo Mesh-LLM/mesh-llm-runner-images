@@ -73,7 +73,9 @@ is readable by consumers with different numeric user IDs.
 Staging and receipt writes use no-follow descriptors relative to the opened cache
 directory. Symlinks, hard links and non-regular staging files are rejected. An
 incomplete read-only partial is copied into a fresh writable inode; the old inode
-is never made writable. Downloads resume through the admitted descriptor.
+is never made writable, and its descriptor closes before downloading the remainder.
+Writable partials resume in place without duplicating their prefix. Downloads
+resume through the admitted descriptor.
 
 Use a separate NFS directory for immutable prepared bases and a unique attempt
 directory for every guest. Never boot a shared writable golden disk. Keep the base on NFS. Each attempt uses a small local QCOW2 overlay, with the
