@@ -44,9 +44,22 @@ def digest(path):
     return [hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns]
 
 
-def jy(config, action):
+def jy(config, action, *arguments):
     return command('runuser', '-u', config['job_user'], '--', 'env',
-                   'HOME=' + config['job_home'], config['jy_binary'], action)
+                   'HOME=' + config['job_home'], config['jy_binary'], action, *arguments)
+
+
+def conditional_admission(config, enabled, snapshot, *, check_only=False):
+    arguments = ['--enabled', str(enabled).lower(), '--if-config-sha256', snapshot[0],
+                 '--if-config-mtime-ns', str(snapshot[1])]
+    if check_only:
+        arguments.append('--check-only')
+    value = json.loads(jy(config, 'admission', *arguments))
+    if (set(value) != {'sha256', 'mtime_ns'} or
+            not re.fullmatch('[a-f0-9]{64}', value['sha256']) or
+            type(value['mtime_ns']) is not int or value['mtime_ns'] < 0):
+        raise ValueError('scheduler returned an invalid conditional admission receipt')
+    return [value['sha256'], value['mtime_ns']]
 
 
 def owner_identity(pid, proc=Path('/proc')):
@@ -105,6 +118,13 @@ def verify_reservation(config, args):
 def set_driver(bdf, target):
     device = PCI / bdf
     current = device / 'driver'
+    if target is None:
+        if current.is_symlink():
+            (current / 'unbind').write_text(bdf)
+        (device / 'driver_override').write_text('\n')
+        if current.is_symlink():
+            raise RuntimeError(f'{bdf}: failed to restore an unbound function')
+        return
     if current.is_symlink() and current.resolve().name == target:
         return
     (device / 'driver_override').write_text(target)
@@ -156,9 +176,15 @@ def native_probe(config):
 
 
 def acquire(config, args):
+    implementation = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    if getattr(args, 'expected_host_sha256', None) != implementation:
+        raise ValueError('installed host helper does not match the admitted recipe')
     if (STATE / 'active.json').exists():
         raise ValueError('host has an unreconciled GPU journal')
+    before_pause = digest(config['jy_config'])
     settings = Path(config['jy_config']).read_text()
+    if digest(config['jy_config']) != before_pause:
+        raise ValueError('scheduler changed during admission; retry with its current settings')
     if not re.search(r'^enabled\s*=\s*true\s*$', settings, re.MULTILINE) or re.search(r'^drain\s*=\s*true\s*$', settings, re.MULTILINE):
         raise ValueError('scheduler must be enabled and not draining')
     owner = verify_reservation(config, args)
@@ -170,19 +196,23 @@ def acquire(config, args):
             raise ValueError('VM work must be a fresh lease directory under an approved scratch root')
     group, devices = gpu_devices(config['backend'], args.gpu, require_vfio=False)
     native_probe(config)
-    bindings = {bdf: (PCI / bdf / 'driver').resolve().name for bdf in devices}
+    # Probe both CLI and daemon support before creating a journal or touching PCI.
+    conditional_admission(config, False, before_pause, check_only=True)
+    bindings = {bdf: (PCI / bdf / 'driver').resolve().name
+                if (PCI / bdf / 'driver').is_symlink() else None for bdf in devices}
     if any(driver == 'vfio-pci' for driver in bindings.values()):
         raise ValueError('GPU was already assigned before acquisition')
     journal = {'schema': 1, 'lease': args.lease, 'gpu': args.gpu, 'group': group,
                'owner': owner, 'deadline': time.time() + 7200, 'bindings': bindings,
-               'services': [], 'consoles': [], 'state': 'acquiring'}
+               'services': [], 'consoles': [], 'state': 'acquiring',
+               'phase': 'before-pause', 'config_before_pause': before_pause}
     if work:
         journal['work'] = str(work)
     save(STATE / 'active.json', journal)
     # Persist scheduler quarantine before the first host/device mutation. The
     # paused setting survives reboot; a job trap is not the recovery mechanism.
-    jy(config, 'off')
-    journal['paused_config'] = digest(config['jy_config'])
+    journal['paused_config'] = conditional_admission(config, False, before_pause)
+    journal['phase'] = 'paused'
     save(STATE / 'active.json', journal)
     command('modprobe', 'vfio-pci')
     for service in ['display-manager.service', 'nvidia-persistenced.service']:
@@ -203,6 +233,52 @@ def acquire(config, args):
     journal['state'] = 'assigned'
     save(STATE / 'active.json', journal)
     return journal
+
+
+def verify_launch_owner(config, pid, owner, proc=Path('/proc')):
+    caller = proc / str(pid)
+    if caller.stat().st_uid != config['job_uid']:
+        raise ValueError('container caller must be the enrolled job account')
+    parent = pid
+    ancestors = set()
+    while parent > 1 and parent not in ancestors:
+        ancestors.add(parent)
+        parent = int((proc / str(parent) / 'stat').read_text().rsplit(')', 1)[1].split()[1])
+    if owner['pid'] not in ancestors:
+        raise ValueError('container caller is outside the lease owner process tree')
+
+
+def launch(config, args, journal):
+    if (journal['state'] != 'assigned' or time.time() >= journal['deadline'] or
+            not owner_alive(journal['owner'])):
+        raise ValueError('Windows lease is no longer active; refusing container creation')
+    verify_launch_owner(config, args.owner_pid, journal['owner'])
+    work = Path(journal['work'])
+    spec = args.launch_spec
+    if not spec or spec.is_symlink() or spec.resolve() != work / 'launch.json':
+        raise ValueError('container launch spec must belong to the current lease workspace')
+    value = json.loads(spec.read_text())
+    name, arguments = value['name'], value['arguments']
+    if (not re.fullmatch('mesh-windows-[a-f0-9]{32}', name) or
+            not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments) or
+            'mesh.windows.lease=' + journal['lease'] not in arguments):
+        raise ValueError('container launch does not identify its current lease')
+    _, devices = gpu_devices(config['backend'], config['gpu'])
+    if set(devices) != set(journal['bindings']):
+        raise ValueError('assigned PCI functions changed before container creation')
+    # main holds the recovery lock through BOTH operations. Recovery either sees
+    # this created container or revokes the lease before a late caller can start it.
+    docker = ['runuser', '-u', config['job_user'], '--', 'env',
+              'HOME=' + config['job_home'], 'docker']
+    created = False
+    try:
+        command(*docker, 'create', '--name', name, *arguments)
+        created = True
+        command(*docker, 'start', name)
+    except Exception:
+        if created:
+            command(*docker, 'rm', '--force', name)
+        raise
 
 
 def collect_and_remove_work(config, journal):
@@ -227,8 +303,9 @@ def collect_and_remove_work(config, journal):
 
 
 def bindings_restored(journal):
-    return all((PCI / bdf / 'driver').is_symlink() and
-               (PCI / bdf / 'driver').resolve().name == driver
+    return all((not (PCI / bdf / 'driver').is_symlink() if driver is None else
+               (PCI / bdf / 'driver').is_symlink() and
+               (PCI / bdf / 'driver').resolve().name == driver)
                for bdf, driver in journal['bindings'].items())
 
 
@@ -264,6 +341,16 @@ def verify_amd_release(config, journal):
 
 
 def restore(config, journal):
+    if (journal.get('phase') == 'before-pause' and 'paused_config' not in journal and
+            digest(config['jy_config']) == journal.get('config_before_pause')):
+        if not bindings_restored(journal):
+            raise RuntimeError('interrupted acquisition changed PCI before its pause receipt')
+        native_probe(config)
+        collect_and_remove_work(config, journal)
+        journal['state'] = 'restored'
+        save(STATE / 'last.json', journal)
+        (STATE / 'active.json').unlink()
+        return journal
     unchanged = digest(config['jy_config']) == journal.get('paused_config')
     if not unchanged:
         jy(config, 'off')
@@ -282,7 +369,8 @@ def restore(config, journal):
         journal['native_rebind_boot'] = boot
         save(STATE / 'active.json', journal)
     for bdf, driver in reversed(list(journal['bindings'].items())):
-        command('modprobe', driver)
+        if driver is not None:
+            command('modprobe', driver)
         set_driver(bdf, driver)
         (PCI / bdf / 'driver_override').write_text('\n')
     native_probe(config)
@@ -292,19 +380,19 @@ def restore(config, journal):
         command('systemctl', 'start', service)
     # An operator's intervening change wins. Preserve quarantine instead of
     # implicitly clearing a newly requested pause/drain or changing quotas.
-    if not unchanged:
+    if not unchanged or digest(config['jy_config']) != journal.get('paused_config'):
         raise RuntimeError('scheduler configuration changed; operator reconciliation required')
     collect_and_remove_work(config, journal)
     journal['state'] = 'restored'
     save(STATE / 'last.json', journal)
-    jy(config, 'on')
+    conditional_admission(config, True, journal['paused_config'])
     (STATE / 'active.json').unlink()
     return journal
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['describe', 'acquire', 'release', 'recover'])
+    parser.add_argument('action', choices=['describe', 'acquire', 'launch', 'release', 'recover'])
     parser.add_argument('--lease')
     parser.add_argument('--gpu')
     parser.add_argument('--journal', type=Path)
@@ -312,6 +400,8 @@ def main():
     parser.add_argument('--backend', choices=['cuda', 'rocm'])
     parser.add_argument('--work', type=Path)
     parser.add_argument('--firmware', action='store_true')
+    parser.add_argument('--launch-spec', type=Path)
+    parser.add_argument('--expected-host-sha256')
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise ValueError('host lifecycle operations require the installed root helper')
@@ -341,11 +431,18 @@ def main():
                     save(args.journal, journal)
                 return
             if not (STATE / 'active.json').exists():
+                if args.action == 'launch':
+                    raise ValueError('Windows lease was retired before container creation')
                 return
             journal = json.loads((STATE / 'active.json').read_text())
             if journal['lease'] != args.lease:
                 raise ValueError('release cannot change another reservation')
+            if args.action == 'launch':
+                launch(config, args, journal)
+                return
         try:
+            journal['state'] = 'releasing'
+            save(STATE / 'active.json', journal)
             result = restore(config, journal)
         except Exception as error:
             journal['state'] = 'quarantined'

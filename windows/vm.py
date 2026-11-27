@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 BDF = re.compile(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]\Z")
+IMMUTABLE_IMAGE = re.compile(r"(?:[^\s]+@)?sha256:[a-f0-9]{64}\Z")
 VENDORS = {"cuda": "0x10de", "rocm": "0x1002"}
 
 
@@ -147,15 +148,25 @@ def container_args(image, storage, shared, *, oem=None, iso=None, devices=(), gr
     return [*args, image]
 
 
-def execute_vm(image, storage, shared, marker, timeout, **kwargs):
+def execute_vm(image, storage, shared, marker, timeout,
+               lifecycle_manager='/usr/local/bin/mesh-windows-host', **kwargs):
     name = "mesh-windows-" + uuid.uuid4().hex
     log = shared / "output/qemu.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     created = False
     try:
-        docker("create", "--name", name, *container_args(image, storage, shared, **kwargs), stdout=subprocess.DEVNULL)
-        created = True
-        docker("start", name, stdout=subprocess.DEVNULL)
+        arguments = container_args(image, storage, shared, **kwargs)
+        if kwargs.get('lease'):
+            spec = storage.parent / 'launch.json'
+            spec.write_text(json.dumps({'name': name, 'arguments': arguments}))
+            subprocess.run([str(lifecycle_manager), 'launch', '--lease', kwargs['lease'],
+                            '--gpu', kwargs['rom_device'], '--launch-spec', str(spec)],
+                           check=True, stdout=subprocess.DEVNULL)
+            created = True
+        else:
+            docker("create", "--name", name, *arguments, stdout=subprocess.DEVNULL)
+            created = True
+            docker("start", name, stdout=subprocess.DEVNULL)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if shutil.disk_usage(storage).free < 2 * 2**30:
@@ -307,7 +318,7 @@ def run(args):
     overlay_storage(args.image, base / "storage", storage)
     shutil.copytree(args.input.resolve(strict=True), shared / "input")
     guest_files = {}
-    for name in ["RunTask.ps1", "InstallDriver.ps1", "GuestTask.ps1"]:
+    for name in ["RunTask.ps1", "InstallDriver.ps1", "GuestTask.ps1", "TaskProcess.cs"]:
         shutil.copyfile(ROOT / "guest" / name, shared / "input" / name)
         guest_files[name] = sha256(ROOT / "guest" / name)
     shutil.copyfile(ROOT / "tools.json", shared / "input/tools.json")
@@ -316,7 +327,8 @@ def run(args):
     result = shared / "output/result.json"
     execute_vm(args.image, storage, shared, result, args.timeout, devices=devices, group=group,
                base=base / "storage", lease=args.lease, rom=rom, rom_device=args.gpu, audio_rom=audio_rom,
-               pcie=args.backend == 'rocm')
+               pcie=args.backend == 'rocm',
+               lifecycle_manager=getattr(args, 'lifecycle_manager', '/usr/local/bin/mesh-windows-host'))
     value = json.loads(result.read_text(encoding="utf-8-sig"))
     if value.get("schema") != 1 or type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         raise RuntimeError(f"Windows task failed: {value}")
@@ -346,12 +358,14 @@ def main():
             action.add_argument("--backend", choices=VENDORS, required=True)
             action.add_argument("--gpu", required=True)
             action.add_argument("--lease", required=True)
+            action.add_argument('--lifecycle-manager', type=Path,
+                                default=Path('/usr/local/bin/mesh-windows-host'))
             action.add_argument("--rom", type=Path, help="operator-supplied GPU option ROM")
             action.add_argument("--rom-sha256", help="SHA-256 of the supplied GPU option ROM")
             action.add_argument("--audio-rom", type=Path, help="supplied UEFI graphics ROM for the paired audio function")
             action.add_argument("--audio-rom-sha256", help="SHA-256 of the supplied audio-function ROM")
     args = parser.parse_args()
-    if hasattr(args, "image") and not re.fullmatch(r"(?:[^\s]+@)?sha256:[a-f0-9]{64}", args.image):
+    if hasattr(args, "image") and not IMMUTABLE_IMAGE.fullmatch(args.image):
         raise ValueError("--image must be a digest reference or full sha256 Docker image ID")
     if hasattr(args, "timeout") and not 60 <= args.timeout <= 7200:
         raise ValueError("timeout must be between 60 and 7200 seconds")

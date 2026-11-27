@@ -6,34 +6,46 @@ function Invoke-GuestTask {
         [Parameter(Mandatory=$true)][string]$LogPrefix
     )
     if (Test-Path $CancellationPath) { throw 'Host cancelled the Windows task' }
+    if (-not ('MeshWindows.TaskProcess' -as [type])) {
+        $source = Join-Path $PSScriptRoot 'TaskProcess.cs'
+        $manifest = Get-Content (Join-Path $PSScriptRoot 'guest.json') -Raw | ConvertFrom-Json
+        if ((Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $manifest.files.'TaskProcess.cs') {
+            throw 'Guest process-tree runner checksum mismatch'
+        }
+        Add-Type -Path $source
+    }
     $prefix = "$LogPrefix-$([guid]::NewGuid().ToString('N'))"
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"")
     $arguments += @($ScriptArguments | ForEach-Object { "`"$_`"" })
-    $child = Start-Process powershell.exe -ArgumentList $arguments -NoNewWindow -PassThru `
-        -RedirectStandardOutput "$prefix.stdout.log" -RedirectStandardError "$prefix.stderr.log"
+    $global:MeshGuestTaskTreeActive = $true
+    $child = $null
     try {
-        # Retain the handle so ExitCode remains available even for a short task.
-        $null = $child.Handle
-        while (-not $child.HasExited) {
+        $child = New-Object MeshWindows.TaskProcess -ArgumentList @(
+            (Join-Path $PSHOME 'powershell.exe'), ($arguments -join ' '),
+            "$prefix.stdout.log", "$prefix.stderr.log"
+        )
+        while (-not $child.HasExited -or -not $child.IsTreeEmpty) {
             if (Test-Path $CancellationPath) {
-                & taskkill.exe /PID $child.Id /T /F | Out-Null
-                if (-not $child.WaitForExit(10000)) { throw 'Windows child did not stop after cancellation' }
+                $child.Stop()
                 throw 'Host cancelled the Windows task'
             }
             Start-Sleep -Milliseconds 250
         }
-        $child.WaitForExit()
         $code = $child.ExitCode
         if ($null -eq $code) { throw 'Windows child exit status is unavailable' }
     } finally {
-        if (-not $child.HasExited) {
-            & taskkill.exe /PID $child.Id /T /F | Out-Null
-            $null = $child.WaitForExit(10000)
+        if ($null -ne $child) {
+            try {
+                if (-not $child.IsTreeEmpty) { $child.Stop() }
+                if (-not $child.IsTreeEmpty) { throw 'Windows task descendants remain active' }
+                $global:MeshGuestTaskTreeActive = $false
+            } finally {
+                $child.Dispose()
+            }
         }
         foreach ($log in @("$prefix.stdout.log", "$prefix.stderr.log")) {
             if (Test-Path $log) { Get-Content $log | ForEach-Object { Write-Host $_ } }
         }
-        $child.Dispose()
     }
     return $code
 }

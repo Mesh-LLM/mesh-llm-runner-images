@@ -42,11 +42,15 @@ class PublicationAdmission(unittest.TestCase):
         self.assertEqual((target / 'receipt').read_text(), 'preserve')
 
     def test_local_target_cannot_become_an_nfs_cache_fallback(self):
-        with patch.object(publisher.subprocess, 'check_output', return_value='autofs\next4\n'), \
-                patch.object(publisher.subprocess, 'run') as run:
-            with self.assertRaisesRegex(ValueError, 'mounted NFS'):
-                publisher.publish(self.source, self.root / 'target', self.root)
-        run.assert_not_called()
+        for image in ['sha256:' + 'a' * 64, 'registry.example/launcher@sha256:' + 'a' * 64]:
+            with self.subTest(image=image):
+                self.receipt['launcher_image'] = image
+                (self.source / 'base.json').write_text(json.dumps(self.receipt))
+                with patch.object(publisher.subprocess, 'check_output', return_value='autofs\next4\n'), \
+                        patch.object(publisher.subprocess, 'run') as run:
+                    with self.assertRaisesRegex(ValueError, 'mounted NFS'):
+                        publisher.publish(self.source, self.root / 'target', self.root)
+                run.assert_not_called()
 
 
 if __name__ == '__main__':

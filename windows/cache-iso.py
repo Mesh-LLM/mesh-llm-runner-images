@@ -95,7 +95,18 @@ def admit(args):
             verify(destination, args.sha256)
             return destination
         partial = entry / "windows11.iso.part"
-        if args.source:
+        complete = False
+        if partial.exists():
+            try:
+                verify(partial, args.sha256)
+                complete = True
+            except ValueError:
+                # An interrupted publisher may have made its staging file
+                # read-only before the final rename. Only staging is writable.
+                partial.chmod(partial.stat().st_mode | 0o200)
+        if complete:
+            pass
+        elif args.source:
             source = args.source.resolve(strict=True)
             verify(source, args.sha256)
             shutil.copyfile(source, partial)
@@ -111,6 +122,7 @@ def admit(args):
         partial.chmod(0o444)
         receipt = {"schema": 1, "sha256": args.sha256, "size_bytes": partial.stat().st_size}
         temporary_receipt = entry / "media.json.tmp"
+        temporary_receipt.unlink(missing_ok=True)
         temporary_receipt.write_text(json.dumps(receipt, indent=2) + "\n")
         temporary_receipt.chmod(0o444)
         temporary_receipt.replace(entry / "media.json")

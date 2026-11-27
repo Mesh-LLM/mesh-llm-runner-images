@@ -87,6 +87,13 @@ try {
 } catch {
     Write-Output $_
 } finally {
+    $treeActive = Get-Variable -Name MeshGuestTaskTreeActive -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+    if ($treeActive) {
+        Write-Output 'Task tree shutdown was not proven; withholding GPU release and task receipt'
+        Stop-Transcript
+        shutdown.exe /s /t 5
+        exit 1
+    }
     if (-not $reboot) {
         try { Stop-AssignedGpu } catch { Write-Output $_; $exitCode = 1 }
     }

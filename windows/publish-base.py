@@ -4,14 +4,13 @@
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
 import uuid
 from pathlib import Path
 
-from vm import sha256, storage_manifest
+from vm import IMMUTABLE_IMAGE, sha256, storage_manifest
 
 
 def publish(source, target, work_root):
@@ -22,7 +21,7 @@ def publish(source, target, work_root):
     if receipt.get('schema') != 1 or storage_manifest(source / 'storage') != receipt.get('files'):
         raise ValueError('source base receipt mismatch')
     image = receipt['launcher_image']
-    if not re.fullmatch(r'sha256:[a-f0-9]{64}', image):
+    if not IMMUTABLE_IMAGE.fullmatch(image):
         raise ValueError('source must identify the exact prepared launcher image')
     filesystem = subprocess.check_output(['findmnt', '--noheadings', '--output', 'FSTYPE', '--target', str(target.parent)], text=True).split()
     if set(filesystem) - {'autofs'} not in ({'nfs'}, {'nfs4'}):

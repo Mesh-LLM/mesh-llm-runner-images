@@ -45,6 +45,24 @@ class MediaCache(unittest.TestCase):
                 media.admit(self.args)
         download.assert_not_called()
 
+    def test_complete_read_only_partial_survives_receipt_failure_and_retries_offline(self):
+        write = Path.write_text
+        def fail_receipt(path, *args, **kwargs):
+            if path.name == 'media.json.tmp':
+                raise OSError(28, 'disk full')
+            return write(path, *args, **kwargs)
+        with patch.object(Path, 'write_text', fail_receipt):
+            with self.assertRaises(OSError):
+                media.admit(self.args)
+        self.source.unlink()
+        self.args.source = None
+        with patch.object(media.shutil, 'copyfile') as copy, patch.object(media, 'download') as download:
+            destination = media.admit(self.args)
+        copy.assert_not_called()
+        download.assert_not_called()
+        self.assertEqual(destination.read_bytes(), self.payload)
+        self.assertEqual(destination.stat().st_mode & 0o222, 0)
+
     def test_expired_link_retains_partial_and_fresh_link_resumes(self):
         self.args.source = None
         self.args.url_file = self.root / "url.txt"

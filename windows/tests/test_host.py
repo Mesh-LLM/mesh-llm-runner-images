@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -54,8 +54,10 @@ class Recovery(unittest.TestCase):
         gpu = self.root / '0000:c2:00.0'
         gpu.mkdir()
         (gpu / 'device').write_text('0x1586')
+        (gpu / 'driver_override').touch()
         self.config.update(backend='rocm', gpu=gpu.name)
         self.journal['work'] = str(work)
+        self.journal['bindings'] = {gpu.name: 'amdgpu'}
         with patch.object(host, 'STATE', self.root), patch.object(host, 'PCI', self.root), \
                 patch.object(host, 'command', return_value=''), patch.object(host, 'jy') as jy, \
                 patch.object(host, 'set_driver') as bind:
@@ -119,12 +121,13 @@ class Recovery(unittest.TestCase):
         with patch.object(host, 'STATE', self.root), patch.object(host, 'PCI', self.root), \
                 patch.object(host, 'command', command), patch.object(host, 'native_probe'), \
                 patch.object(host, 'set_driver', side_effect=lambda *args: calls.append(('bind', *args))), \
-                patch.object(host, 'jy') as jy:
+                patch.object(host, 'conditional_admission') as resume, patch.object(host, 'jy') as jy:
             host.restore(self.config, self.journal)
         self.assertIn('label=mesh.windows.lease=run_test', calls[0])
         self.assertLess(calls.index(('docker', 'rm', '--force', 'owned')),
                         calls.index(('bind', '0000:01:00.0', 'nvidia')))
-        jy.assert_called_once_with(self.config, 'on')
+        resume.assert_called_once_with(self.config, True, self.journal['paused_config'])
+        jy.assert_not_called()
         self.assertFalse((self.root / 'active.json').exists())
 
     def test_dead_owner_or_reused_pid_is_not_a_live_lease(self):
@@ -199,30 +202,174 @@ class Recovery(unittest.TestCase):
         gpu = self.root / '0000:01:00.0'
         gpu.mkdir()
         (gpu / 'driver').symlink_to('/sys/bus/pci/drivers/nvidia')
+        audio = self.root / '0000:01:00.1'
+        audio.mkdir()
         self.config.update(gpu=gpu.name)
-        args = argparse.Namespace(gpu=gpu.name, lease='run_test', owner_pid=22, work=None)
+        args = argparse.Namespace(gpu=gpu.name, lease='run_test', owner_pid=22, work=None,
+                                  expected_host_sha256=host.hashlib.sha256(Path(host.__file__).read_bytes()).hexdigest())
 
-        def pause(config, action):
-            self.assertEqual(action, 'off')
-            self.config_file.write_text('enabled = false\ndrain = false\n')
+        def pause(config, enabled, snapshot, *, check_only=False):
+            self.assertFalse(enabled)
+            self.assertEqual(host.digest(self.config_file), snapshot)
+            if not check_only:
+                self.config_file.write_text('enabled = false\ndrain = false\n')
+            return host.digest(self.config_file)
 
         def bind(*_):
             journal = json.loads((self.root / 'active.json').read_text())
-            self.assertEqual(journal['bindings'], {gpu.name: 'nvidia'})
+            self.assertEqual(journal['bindings'], {gpu.name: 'nvidia', audio.name: None})
             self.assertEqual(journal['paused_config'], host.digest(self.config_file))
             raise RuntimeError('injected bind failure')
 
         with patch.object(host, 'STATE', self.root), patch.object(host, 'PCI', self.root), \
                 patch.object(host, 'verify_reservation', return_value={'pid': 22}), \
-                patch.object(host, 'gpu_devices', return_value=('12', [gpu.name])), \
+                patch.object(host, 'gpu_devices', return_value=('12', [gpu.name, audio.name])), \
                 patch.object(host, 'native_probe'), patch.object(host, 'command'), \
                 patch.object(host.subprocess, 'run', return_value=argparse.Namespace(returncode=1)), \
-                patch.object(host, 'refuse_open_devices'), patch.object(host, 'jy', pause), \
+                patch.object(host, 'refuse_open_devices'), patch.object(host, 'conditional_admission', pause), \
                 patch.object(host, 'set_driver', bind):
             with self.assertRaisesRegex(RuntimeError, 'injected bind failure'):
                 host.acquire(self.config, args)
         self.assertTrue((self.root / 'active.json').exists())
         self.assertIn('enabled = false', self.config_file.read_text())
+
+    def test_operator_drain_during_docker_stop_cannot_resume(self):
+        def command(*args, **kwargs):
+            if args[:3] == ('docker', 'ps', '-aq'):
+                return 'owned\n'
+            if args[:2] == ('docker', 'stop'):
+                self.config_file.write_text('enabled = false\ndrain = true\n')
+            return ''
+        with patch.object(host, 'STATE', self.root), patch.object(host, 'command', command), \
+                patch.object(host, 'native_probe'), patch.object(host, 'conditional_admission') as resume:
+            with self.assertRaisesRegex(RuntimeError, 'operator reconciliation'):
+                host.restore(self.config, self.journal)
+        resume.assert_not_called()
+        self.assertIn('drain = true', self.config_file.read_text())
+
+    def test_interruption_before_pause_reconciles_without_toggling_admission_or_pci(self):
+        self.config_file.write_text('enabled = true\ndrain = false\n')
+        self.journal.pop('paused_config')
+        self.journal.update(phase='before-pause', config_before_pause=host.digest(self.config_file))
+        host.save(self.root / 'active.json', self.journal)
+        with patch.object(host, 'STATE', self.root), patch.object(host, 'native_probe'), \
+                patch.object(host, 'jy') as jy, patch.object(host, 'set_driver') as bind:
+            host.restore(self.config, self.journal)
+        jy.assert_not_called()
+        bind.assert_not_called()
+        self.assertFalse((self.root / 'active.json').exists())
+
+    def test_unbound_audio_is_restored_without_modprobe_or_native_binding(self):
+        audio = self.root / '0000:01:00.1'
+        audio.mkdir()
+        (audio / 'driver_override').write_text('vfio-pci')
+        self.journal['bindings'] = {audio.name: None}
+        host.save(self.root / 'active.json', self.journal)
+        with patch.object(host, 'STATE', self.root), patch.object(host, 'PCI', self.root), \
+                patch.object(host, 'command', return_value='') as command, \
+                patch.object(host, 'native_probe'), patch.object(host, 'conditional_admission'):
+            host.restore(self.config, self.journal)
+            self.assertTrue(host.bindings_restored(self.journal))
+        self.assertFalse(any(call.args[0] == 'modprobe' for call in command.call_args_list))
+        self.assertEqual((audio / 'driver_override').read_text(), '\n')
+
+    def test_revoked_or_expired_owner_cannot_create_a_container(self):
+        for state, deadline in [('releasing', 10**20), ('assigned', 0)]:
+            journal = dict(state=state, deadline=deadline, owner={'pid': 22})
+            with self.subTest(state=state), patch.object(host, 'owner_alive', return_value=True), \
+                    patch.object(host, 'command') as command:
+                with self.assertRaisesRegex(ValueError, 'no longer active'):
+                    host.launch(self.config, argparse.Namespace(), journal)
+                command.assert_not_called()
+
+    def test_unmatched_recipe_cannot_pause_or_assign_pci(self):
+        with patch.object(host, 'jy') as jy, patch.object(host, 'set_driver') as bind:
+            with self.assertRaisesRegex(ValueError, 'admitted recipe'):
+                host.acquire(self.config, argparse.Namespace(expected_host_sha256='wrong'))
+        jy.assert_not_called()
+        bind.assert_not_called()
+
+    def test_old_scheduler_is_rejected_before_journaling_or_pci_handoff(self):
+        self.config_file.write_text('enabled = true\ndrain = false\n')
+        args = argparse.Namespace(gpu='0000:01:00.0', lease='run_test', work=None,
+                                  expected_host_sha256=host.hashlib.sha256(Path(host.__file__).read_bytes()).hexdigest())
+        with patch.object(host, 'STATE', self.root), patch.object(host, 'verify_reservation'), \
+                patch.object(host, 'gpu_devices', return_value=('12', [])), \
+                patch.object(host, 'native_probe'), patch.object(host, 'set_driver') as bind, \
+                patch.object(host, 'conditional_admission', side_effect=RuntimeError('old daemon')) as admission:
+            with self.assertRaisesRegex(RuntimeError, 'old daemon'):
+                host.acquire(self.config, args)
+        admission.assert_called_once_with(self.config, False, host.digest(self.config_file), check_only=True)
+        bind.assert_not_called()
+        self.assertFalse((self.root / 'active.json').exists())
+        self.assertIn('enabled = true', self.config_file.read_text())
+
+    def test_launch_requires_the_enrolled_owner_process_tree(self):
+        proc = self.root / 'proc'
+        for pid, parent in [(22, 1), (23, 22), (24, 1)]:
+            (proc / str(pid)).mkdir(parents=True)
+            (proc / str(pid) / 'stat').write_text(f'{pid} (task) S {parent}')
+        self.config['job_uid'] = proc.stat().st_uid
+        host.verify_launch_owner(self.config, 23, {'pid': 22}, proc)
+        with self.assertRaisesRegex(ValueError, 'outside the lease'):
+            host.verify_launch_owner(self.config, 24, {'pid': 22}, proc)
+
+    def test_admitted_launch_creates_and_starts_as_job_user_and_cleans_start_failure(self):
+        work = self.root / 'run_test'
+        work.mkdir()
+        spec = work / 'launch.json'
+        name = 'mesh-windows-' + 'a' * 32
+        arguments = ['--label', 'mesh.windows.lease=run_test', 'image']
+        spec.write_text(json.dumps({'name': name, 'arguments': arguments}))
+        self.config.update(job_user='worker', job_home='/home/worker', gpu='0000:01:00.0')
+        journal = dict(state='assigned', deadline=10**20, owner={'pid': 22},
+                       work=str(work), lease='run_test', bindings={'0000:01:00.0': 'nvidia'})
+        args = argparse.Namespace(owner_pid=23, launch_spec=spec)
+        for fail_start in [False, True]:
+            calls = []
+            def command(*args, **kwargs):
+                calls.append(args)
+                if fail_start and 'start' in args:
+                    raise RuntimeError('injected start failure')
+                return ''
+            with self.subTest(fail_start=fail_start), patch.object(host, 'owner_alive', return_value=True), \
+                    patch.object(host, 'verify_launch_owner'), patch.object(host, 'command', command), \
+                    patch.object(host, 'gpu_devices', return_value=(['12'], ['0000:01:00.0'])):
+                if fail_start:
+                    with self.assertRaisesRegex(RuntimeError, 'injected start'):
+                        host.launch(self.config, args, journal)
+                else:
+                    host.launch(self.config, args, journal)
+            prefix = ('runuser', '-u', 'worker', '--', 'env', 'HOME=/home/worker', 'docker')
+            self.assertEqual(calls[:2], [(*prefix, 'create', '--name', name, *arguments), (*prefix, 'start', name)])
+            self.assertEqual(calls[2:], [(*prefix, 'rm', '--force', name)] if fail_start else [])
+
+    def test_recovery_revokes_launch_before_container_inventory(self):
+        self.journal.update(owner={'pid': 22}, state='assigned', deadline=0)
+        host.save(self.root / 'active.json', self.journal)
+        config = Mock()
+        config.read_text.return_value = json.dumps(self.config)
+        config.stat.return_value = argparse.Namespace(st_uid=0, st_mode=0o600)
+        def restore(settings, journal):
+            saved = json.loads((self.root / 'active.json').read_text())
+            self.assertEqual(saved['state'], 'releasing')
+            with self.assertRaisesRegex(ValueError, 'no longer active'):
+                host.launch(settings, argparse.Namespace(), saved)
+            return journal
+        with patch.object(host, 'CONFIG', config), patch.object(host, 'STATE', self.root), \
+                patch.object(host.os, 'geteuid', return_value=0), patch.object(host, 'owner_alive', return_value=False), \
+                patch.object(host, 'restore', restore), patch.object(sys, 'argv', ['host.py', 'recover']):
+            host.main()
+
+    def test_pause_receipt_does_not_adopt_a_later_operator_edit(self):
+        acknowledged = {'sha256': 'a' * 64, 'mtime_ns': 123}
+        def reply(*_):
+            self.config_file.write_text('enabled = false\ndrain = true\n')
+            return json.dumps(acknowledged)
+        with patch.object(host, 'jy', reply):
+            actual = host.conditional_admission(self.config, False, ['b' * 64, 122])
+        self.assertEqual(actual, ['a' * 64, 123])
+        self.assertNotEqual(actual, host.digest(self.config_file))
 
     def test_zombie_owner_is_an_expired_process(self):
         proc = self.root / 'proc'

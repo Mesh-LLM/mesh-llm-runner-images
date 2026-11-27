@@ -137,6 +137,8 @@ class GuestLifecycle(unittest.TestCase):
                 pins = shared / 'input/tools.json'
                 manifest = json.loads((shared / 'input/guest.json').read_text())
                 self.assertEqual(manifest['files']['tools.json'], vm.sha256(pins))
+                self.assertEqual(manifest['files']['TaskProcess.cs'],
+                                 vm.sha256(shared / 'input/TaskProcess.cs'))
                 self.assertEqual(pins.read_bytes(), (vm.ROOT / 'tools.json').read_bytes())
                 result.parent.mkdir(exist_ok=True)
                 result.write_text(json.dumps({'schema': 1, 'exit_code': 0}))
@@ -237,6 +239,27 @@ class GuestLifecycle(unittest.TestCase):
             self.assertTrue(any(args[0] == "stop" for args in calls))
             self.assertTrue(any(args[0] == "rm" for args in calls))
             self.assertEqual(calls[-1][0], "run")
+
+    def test_leased_vm_creation_uses_the_recovery_fence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage, shared = root / 'storage', root / 'shared'
+            storage.mkdir()
+            marker = root / 'result.json'
+            marker.write_text('{}')
+            with patch.object(vm, 'docker', return_value=type('Result', (), {'stdout': 'false\n'})()) as docker, \
+                    patch.object(vm.subprocess, 'run') as launch, \
+                    patch.object(vm, 'restore_ownership'), patch.object(vm, 'request_guest_cancel'), \
+                    patch.object(vm.shutil, 'disk_usage', return_value=type('Usage', (), {'free': 10 * 2**30})()):
+                vm.execute_vm('image', storage, shared, marker, 60, lease='run_test',
+                              devices=['0000:01:00.0'], group=['12'], rom_device='0000:01:00.0',
+                              lifecycle_manager='/approved/manager')
+            launch.assert_called_once()
+            self.assertEqual(launch.call_args.args[0], ['/approved/manager', 'launch', '--lease', 'run_test',
+                             '--gpu', '0000:01:00.0', '--launch-spec', str(root / 'launch.json')])
+            spec = json.loads((root / 'launch.json').read_text())
+            self.assertIn('mesh.windows.lease=run_test', spec['arguments'])
+            self.assertFalse(any(call.args[0] in ('create', 'start') for call in docker.call_args_list))
 
     def test_base_receipt_detects_changes(self):
         with tempfile.TemporaryDirectory() as tmp:

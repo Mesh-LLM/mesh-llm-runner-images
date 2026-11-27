@@ -170,16 +170,32 @@ Windows guests still receive only explicit KVM/VFIO devices.
 
 Acquisition verifies the connected single-slot scheduler and the current native
 reservation or accepted GitHub worker, journals original bindings, then persists
-`jy off` before stopping display services and assigning VFIO. A 2-hour lease and
+conditional scheduler pause before stopping display services and assigning VFIO.
+The scheduler must support `jy admission --enabled BOOL --if-config-sha256 SHA
+--if-config-mtime-ns NS [--check-only]` in both its CLI and daemon (JY 0.9.55 or
+later). The daemon compares the saved configuration and updates admission under
+the same lock used by operator controls. Acquisition probes this contract before
+creating a journal or changing a device; older installations fail without a handoff.
+A 2-hour lease and
 owner PID/start-time/boot identity let the independent timer recover abandoned
 allocations. Recovery stops only containers labeled for that lease, restores
-bindings and display services, and verifies native GPU discovery before `jy on`.
+bindings and display services, and verifies native GPU discovery before a
+conditional resume using the exact pause receipt.
 Intervening operator configuration changes or restoration failures preserve
 quarantine. The root journal survives job cancellation and reboot. Physical
 passthrough, reset and recovery still require qualification on each host type.
 
+Call acquisition with `--expected-host-sha256` equal to the SHA-256 of `host.py`
+from the admitted recipe. This prevents an older installed helper from accepting
+a newer caller's lifecycle assumptions. A leased `run` uses the installed
+manager's `launch` action for container creation and start under the recovery
+lock. Pass `--lifecycle-manager PATH` when its approved wrapper has a different
+location. Recovery revokes launch permission before inventorying containers, so
+an expired or cancelled owner cannot create a late VM after native restoration.
+
 The base pins a small startup bootstrap. Each job supplies checksum-admitted
-`RunTask.ps1`, `InstallDriver.ps1` and tool pins from the pinned recipe checkout, so a guest
+`RunTask.ps1`, `GuestTask.ps1`, `TaskProcess.cs`, `InstallDriver.ps1` and tool pins
+from the pinned recipe checkout, so a guest
 script fix does not require rebuilding Windows. Changing the bootstrap requires
 a fresh base; incompatible bases fail before boot. PCI detection uses PnP
 entities before vendor installation and requires successful device initialization
@@ -191,7 +207,11 @@ include the same pinned binary. Python's `python3.exe` alias and jq are availabl
 to the shared Just/Git Bash CI commands.
 
 Cancellation requests a cooperative guest stop before VM teardown. The guest
-terminates only its admitted child process tree, then unloads the AMD GPU and
+contains the admitted child in a Windows Job Object before resuming it. Normal
+completion waits for all descendants even when the root exits first; cancellation
+terminates only that job. Only a proven empty process tree permits AMD unload and
+the final task receipt. Unproven cleanup withholds both and shuts down, preserving
+host quarantine. After successful cleanup the guest unloads the AMD GPU and
 records its release receipt. The independent host recovery service makes the
 same request when the caller disappears. A nonresponsive guest has a bounded
 grace period; missing AMD release proof still retains VFIO quarantine.

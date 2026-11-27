@@ -1,8 +1,12 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-. "$PSScriptRoot\..\guest\GuestTask.ps1"
 $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $scratch | Out-Null
+Copy-Item "$PSScriptRoot\..\guest\GuestTask.ps1" $scratch
+Copy-Item "$PSScriptRoot\..\guest\TaskProcess.cs" $scratch
+@{files=@{'TaskProcess.cs'=(Get-FileHash "$scratch\TaskProcess.cs" -Algorithm SHA256).Hash.ToLowerInvariant()}} |
+    ConvertTo-Json | Set-Content "$scratch\guest.json" -Encoding UTF8
+. "$scratch\GuestTask.ps1"
 $cancel = Join-Path $scratch 'cancel.request'
 $scriptFile = Join-Path $scratch 'task with spaces.ps1'
 $unrelated = $null
@@ -11,8 +15,20 @@ try {
     Set-Content $scriptFile 'Write-Output "child output"; exit 7'
     $code = Invoke-GuestTask -ScriptPath $scriptFile -CancellationPath $cancel -LogPrefix "$scratch\exit"
     if ($code -ne 7) { throw "Child failure was lost: $code" }
+    if ($global:MeshGuestTaskTreeActive) { throw 'Completed task retained an active-tree marker' }
     $log = Get-ChildItem "$scratch\exit-*.stdout.log" | Select-Object -First 1
     if ((Get-Content $log.FullName -Raw) -notmatch 'child output') { throw 'Child output was lost' }
+
+    $orphanDone = Join-Path $scratch 'orphan-complete.txt'
+    Set-Content $scriptFile @'
+param([string]$Done)
+$command = "Start-Sleep -Seconds 2; Set-Content '$Done' 'completed'"
+Start-Process powershell.exe -ArgumentList @('-NoProfile','-Command',$command) | Out-Null
+exit 9
+'@
+    $code = Invoke-GuestTask -ScriptPath $scriptFile -ScriptArguments @('-Done', $orphanDone) `
+        -CancellationPath $cancel -LogPrefix "$scratch\orphan"
+    if ($code -ne 9 -or -not (Test-Path $orphanDone)) { throw 'Root exit escaped descendant completion' }
 
     $grandchildFile = Join-Path $scratch 'grandchild.pid'
     Set-Content $scriptFile @'
@@ -40,6 +56,7 @@ Start-Sleep -Seconds 180
         $cancelled = $true
     }
     if (-not $cancelled) { throw 'Cancellation did not fail the child task' }
+    if ($global:MeshGuestTaskTreeActive) { throw 'Cancelled task retained an active-tree marker' }
     $grandchildId = [int](Get-Content $grandchildFile -Raw)
     if (Get-Process -Id $grandchildId -ErrorAction SilentlyContinue) { throw 'A task descendant survived cancellation' }
     if ($unrelated.HasExited) { throw 'Cancellation stopped an unrelated process' }
