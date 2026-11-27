@@ -83,6 +83,15 @@ class PassthroughPolicy(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PCI address"):
             vm.gpu_devices("cuda", "0000:01:00.0 -device bad", sysfs=self.root)
 
+    def test_rocm_rejects_colliding_guest_addresses_before_native_handoff(self):
+        (self.gpu / 'vendor').write_text('0x1002')
+        self.device('0000:02:00.0', '0x030000', '0x1002')
+        with self.assertRaisesRegex(ValueError, 'duplicate guest PCI'):
+            vm.gpu_devices('rocm', self.gpu.name, sysfs=self.root, require_vfio=False)
+        with self.assertRaisesRegex(ValueError, 'duplicate guest PCI'):
+            vm.container_args('image', Path('/disk'), Path('/shared'),
+                              devices=[self.gpu.name, '0000:02:00.0'], group=['12'], pcie=True)
+
 
 class GuestLifecycle(unittest.TestCase):
     def test_cancellation_waits_for_guest_completion_before_teardown(self):

@@ -70,6 +70,10 @@ be admitted with `--source /path/to/windows11.iso` instead of `--url-file`.
 Both sites use the same trusted digest; their NFS paths are site-local. The
 publisher that starts a partial download owns its continuation; completed media
 is readable by consumers with different numeric user IDs.
+Staging and receipt writes use no-follow descriptors relative to the opened cache
+directory. Symlinks, hard links and non-regular staging files are rejected. An
+incomplete read-only partial is copied into a fresh writable inode; the old inode
+is never made writable. Downloads resume through the admitted descriptor.
 
 Use a separate NFS directory for immutable prepared bases and a unique attempt
 directory for every guest. Never boot a shared writable golden disk. Keep the base on NFS. Each attempt uses a small local QCOW2 overlay, with the
@@ -107,6 +111,10 @@ preparation writes `base.json`, which records the ISO, tools, launcher and all
 storage-file hashes. `publish` compresses the data disk, verifies virtual disk equality and every
 cache byte, then atomically publishes storage, its receipt and the exact launcher
 archive to NFS. The disk itself is never published by this repository.
+Publication resolves a registry-qualified launcher digest to its local config
+image ID and records that ID in the published base. The original prepared
+reference remains in derivation metadata. Consumers use the published
+`launcher_image`, so loading `launcher.tar` needs no registry reference or pull.
 
 ## Rehearse a task
 

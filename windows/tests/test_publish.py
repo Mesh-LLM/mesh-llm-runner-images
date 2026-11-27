@@ -52,6 +52,33 @@ class PublicationAdmission(unittest.TestCase):
                         publisher.publish(self.source, self.root / 'target', self.root)
                 run.assert_not_called()
 
+    def test_published_launcher_uses_the_image_id_preserved_by_docker_save(self):
+        image_id = 'sha256:' + 'b' * 64
+        for image in [image_id, 'registry.example/launcher@sha256:' + 'a' * 64]:
+            with self.subTest(prepared=image):
+                self.receipt['launcher_image'] = image
+                (self.source / 'base.json').write_text(json.dumps(self.receipt))
+                target = self.root / ('target-id' if image == image_id else 'target-digest')
+                def inspect(args, **kwargs):
+                    return 'nfs4\n' if args[0] == 'findmnt' else image_id + '\n'
+                calls = []
+                def run(args, **kwargs):
+                    calls.append(args)
+                    if args[:3] == ['docker', 'image', 'save']:
+                        Path(args[-1]).write_bytes(b'archive fixture')
+                    elif 'convert' in args:
+                        mount = next(a for a in args if a.startswith('type=bind,src=') and a.endswith('dst=/target'))
+                        storage = Path(mount.split('src=', 1)[1].split(',dst=', 1)[0])
+                        (storage / 'data.qcow2').write_bytes(b'converted fixture')
+                with patch.object(publisher.subprocess, 'check_output', inspect), \
+                        patch.object(publisher.subprocess, 'run', run):
+                    publisher.publish(self.source, target, self.root)
+                receipt = json.loads((target / 'base.json').read_text())
+                self.assertEqual(receipt['launcher_image'], image_id)
+                self.assertEqual(receipt['derivation']['parent_launcher_image'], image)
+                self.assertEqual(next(c for c in calls if c[:3] == ['docker', 'image', 'save'])[3], image_id)
+                self.assertTrue(all(image_id in c for c in calls if c[:2] == ['docker', 'run']))
+
 
 if __name__ == '__main__':
     unittest.main()

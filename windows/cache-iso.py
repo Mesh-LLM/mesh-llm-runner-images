@@ -2,15 +2,18 @@
 """Admit a supplied Windows ISO into a checksum-addressed shared media cache."""
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -52,11 +55,103 @@ def download(url_file, partial):
         "curl", "--fail", "--location", "--continue-at", "-", "--silent", "--show-error",
         "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "30",
         "--max-time", "3600", "--retry", "3", "--retry-delay", "5",
-        "--output", str(partial), "--config", "-",
-    ], input=config, text=True, capture_output=True)
+        "--output", f'/dev/fd/{partial.fileno()}', "--config", "-",
+    ], input=config, text=True, capture_output=True, pass_fds=(partial.fileno(),))
     if result.returncode:
         raise RuntimeError(f"ISO download failed (curl exit {result.returncode}); partial media retained. "
                            "If the Microsoft link expired, supply a fresh link for the same ISO and checksum.")
+
+
+def open_regular(directory, name, flags, mode=0o600):
+    descriptor = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=directory)
+    state = os.fstat(descriptor)
+    if not stat.S_ISREG(state.st_mode) or state.st_nlink != 1:
+        os.close(descriptor)
+        raise ValueError('ISO cache staging must be a regular file with no hard links')
+    return descriptor
+
+
+def stream_digest(stream):
+    stream.seek(0)
+    state = hashlib.sha256()
+    for block in iter(lambda: stream.read(1024 * 1024), b''):
+        state.update(block)
+    return state.hexdigest()
+
+
+@contextmanager
+def staging_iso(directory, expected):
+    name = 'windows11.iso.part'
+    try:
+        original = os.fdopen(open_regular(directory, name, os.O_RDONLY), 'rb')
+    except FileNotFoundError:
+        original = None
+    try:
+        if original and stream_digest(original) == expected:
+            yield original, True
+            return
+        temporary = '.iso-' + uuid.uuid4().hex
+        try:
+            with os.fdopen(open_regular(directory, temporary, os.O_CREAT | os.O_EXCL | os.O_RDWR), 'w+b') as stream:
+                if original:
+                    # Never chmod or overwrite the old read-only partial. A fresh
+                    # descriptor owns every validation, write and permission change.
+                    original.seek(0)
+                    shutil.copyfileobj(original, stream)
+                stream.flush()
+                os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+                yield stream, False
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+    finally:
+        if original:
+            original.close()
+
+
+def publish_receipt(directory, receipt):
+    name = '.receipt-' + uuid.uuid4().hex
+    try:
+        with os.fdopen(open_regular(directory, name, os.O_CREAT | os.O_EXCL | os.O_WRONLY), 'w') as stream:
+            json.dump(receipt, stream, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o444)
+        os.replace(name, 'media.json', src_dir_fd=directory, dst_dir_fd=directory)
+    finally:
+        try:
+            os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+
+
+def populate(directory, args):
+    with staging_iso(directory, args.sha256) as (stream, complete):
+        if not complete:
+            if args.source:
+                source = args.source.resolve(strict=True)
+                verify(source, args.sha256)
+                stream.seek(0)
+                stream.truncate()
+                with source.open('rb') as supplied:
+                    shutil.copyfileobj(supplied, stream)
+                stream.flush()
+            elif args.url_file:
+                download(args.url_file, stream)
+            else:
+                raise ValueError('ISO is not cached; provide --source or --url-file for initial population')
+        if stream_digest(stream) != args.sha256:
+            os.unlink('windows11.iso.part', dir_fd=directory)
+            raise ValueError('Windows ISO checksum mismatch; no cached media was admitted')
+        state = os.fstat(stream.fileno())
+        current = os.stat('windows11.iso.part', dir_fd=directory, follow_symlinks=False)
+        if (state.st_dev, state.st_ino) != (current.st_dev, current.st_ino) or state.st_nlink != 1:
+            raise ValueError('ISO staging changed during publication')
+        os.fchmod(stream.fileno(), 0o444)
+        publish_receipt(directory, {'schema': 1, 'sha256': args.sha256, 'size_bytes': state.st_size})
+        os.replace('windows11.iso.part', 'windows11.iso', src_dir_fd=directory, dst_dir_fd=directory)
 
 
 def admit(args):
@@ -81,52 +176,34 @@ def admit(args):
     if destination.exists():
         verify(destination, args.sha256)
         return destination
-    with (entry / ".lock").open("a+b") as lock:
-        deadline = time.monotonic() + 300
-        while True:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("timed out waiting for the ISO cache publisher")
-                time.sleep(1)
-        if destination.exists():
-            verify(destination, args.sha256)
-            return destination
-        partial = entry / "windows11.iso.part"
-        complete = False
-        if partial.exists():
-            try:
-                verify(partial, args.sha256)
-                complete = True
-            except ValueError:
-                # An interrupted publisher may have made its staging file
-                # read-only before the final rename. Only staging is writable.
-                partial.chmod(partial.stat().st_mode | 0o200)
-        if complete:
-            pass
-        elif args.source:
-            source = args.source.resolve(strict=True)
-            verify(source, args.sha256)
-            shutil.copyfile(source, partial)
-        elif args.url_file:
-            download(args.url_file, partial)
-        else:
-            raise ValueError("ISO is not cached; provide --source or --url-file for initial population")
+    directory = os.open(entry, os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        lock_descriptor = open_regular(directory, '.lock', os.O_CREAT | os.O_RDWR)
+    except Exception:
+        os.close(directory)
+        raise
+    with os.fdopen(lock_descriptor, 'a+b') as lock:
         try:
-            verify(partial, args.sha256)
-        except ValueError:
-            partial.unlink(missing_ok=True)
-            raise
-        partial.chmod(0o444)
-        receipt = {"schema": 1, "sha256": args.sha256, "size_bytes": partial.stat().st_size}
-        temporary_receipt = entry / "media.json.tmp"
-        temporary_receipt.unlink(missing_ok=True)
-        temporary_receipt.write_text(json.dumps(receipt, indent=2) + "\n")
-        temporary_receipt.chmod(0o444)
-        temporary_receipt.replace(entry / "media.json")
-        partial.replace(destination)
+            return admit_locked(directory, destination, args, lock)
+        finally:
+            os.close(directory)
+
+
+def admit_locked(directory, destination, args, lock):
+    deadline = time.monotonic() + 300
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("timed out waiting for the ISO cache publisher")
+            time.sleep(1)
+    if destination.exists():
+        verify(destination, args.sha256)
+        return destination
+    populate(directory, args)
+    verify(destination, args.sha256)
     return destination
 
 

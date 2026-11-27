@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -29,6 +30,9 @@ def publish(source, target, work_root):
     disks = [name for name in ['data.img', 'data.qcow2'] if (source / 'storage' / name).is_file()]
     if len(disks) != 1:
         raise ValueError('source must contain one raw or QCOW2 Windows data disk')
+    image_id = subprocess.check_output(['docker', 'image', 'inspect', image, '--format', '{{.Id}}'], text=True).strip()
+    if not re.fullmatch(r'sha256:[a-f0-9]{64}', image_id):
+        raise ValueError('prepared launcher did not resolve to a loadable image ID')
     disk_format = 'raw' if disks[0].endswith('.img') else 'qcow2'
     stage = target.parent / ('.incoming-' + uuid.uuid4().hex)
     try:
@@ -41,7 +45,7 @@ def publish(source, target, work_root):
                     shutil.copyfile(path, storage / path.name)
             docker = ['docker', 'run', '--rm', '--user', str(os.getuid()), '--network', 'none',
                       '--mount', f'type=bind,src={source}/storage,dst=/source,readonly',
-                      '--mount', f'type=bind,src={storage},dst=/target', '--entrypoint', 'qemu-img', image]
+                      '--mount', f'type=bind,src={storage},dst=/target', '--entrypoint', 'qemu-img', image_id]
             subprocess.run(docker + ['convert', '-f', disk_format, '-O', 'qcow2', '-c', '-o', 'compression_type=zstd',
                                     '/source/' + disks[0], '/target/data.qcow2'], check=True)
             subprocess.run(docker + ['compare', '-f', disk_format, '-F', 'qcow2',
@@ -49,9 +53,13 @@ def publish(source, target, work_root):
             if storage_manifest(source / 'storage') != receipt['files']:
                 raise ValueError('source changed during conversion')
             receipt['derivation'] = {'parent_receipt_sha256': sha256(source / 'base.json'),
+                                     'parent_launcher_image': image,
                                      'method': 'qemu-img convert -c compression_type=zstd', 'virtual_disk_compare': 'equal'}
+            # Docker archives retain the config image ID, not registry digest
+            # references. The published base must run offline after image load.
+            receipt['launcher_image'] = image_id
             receipt['files'] = storage_manifest(storage)
-            subprocess.run(['docker', 'image', 'save', image, '--output', str(work / 'launcher.tar')], check=True)
+            subprocess.run(['docker', 'image', 'save', image_id, '--output', str(work / 'launcher.tar')], check=True)
             receipt['launcher_archive_sha256'] = sha256(work / 'launcher.tar')
             (work / 'base.json').write_text(json.dumps(receipt, indent=2) + '\n')
             shutil.copytree(work, stage)
