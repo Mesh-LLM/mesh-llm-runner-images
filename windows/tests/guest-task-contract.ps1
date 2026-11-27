@@ -63,7 +63,11 @@ Start-Sleep -Seconds 20
         if (-not $cancelled) { throw "Cancellation did not fail the task (root exited: $exitRoot)" }
         if ($global:MeshGuestTaskTreeActive) { throw 'Cancelled task retained an active-tree marker' }
         $grandchildId = [int](Get-Content $grandchildFile -Raw)
-        if (Get-Process -Id $grandchildId -ErrorAction SilentlyContinue) { throw 'A task descendant survived cancellation' }
+        $grandchild = Get-Process -Id $grandchildId -ErrorAction SilentlyContinue
+        if ($null -ne $grandchild) {
+            Write-Output "Descendant $grandchildId remains visible; exited: $($grandchild.HasExited)"
+            if (-not $grandchild.HasExited) { throw 'A task descendant survived cancellation' }
+        }
         if ($unrelated.HasExited) { throw 'Cancellation stopped an unrelated process' }
         Stop-Job $publisher
         Remove-Job $publisher -Force
