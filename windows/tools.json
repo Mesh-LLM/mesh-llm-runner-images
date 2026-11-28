@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "tools": [
+    {
+      "filename": "python-3.12.10-amd64.exe",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe",
+      "sha256": "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb",
+      "kind": "exe",
+      "arguments": "/quiet InstallAllUsers=1 TargetDir=C:\\MeshWindows\\Python Include_test=0 Include_launcher=0 PrependPath=0"
+    },
+    {
+      "filename": "Git-2.56.1-64-bit.exe",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/Git-2.56.1-64-bit.exe",
+      "sha256": "c330c72e10b408cc39994bfefdb63542b0d93d21699325c3e0bd874af8a5a559",
+      "kind": "exe",
+      "arguments": "/VERYSILENT /NORESTART /NOCANCEL /SP- /DIR=C:\\MeshWindows\\Git"
+    },
+    {
+      "filename": "just-1.58.0-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-pc-windows-msvc.zip",
+      "sha256": "759f16fb7aa17c5c8b9594b6d4a8c1a6630dfd042cf2b3ff84841454d3d188dc",
+      "kind": "zip",
+      "directory": "Just"
+    },
+    {
+      "filename": "jq-windows-amd64.exe",
+      "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe",
+      "sha256": "23cb60a1354eed6bcc8d9b9735e8c7b388cd1fdcb75726b93bc299ef22dd9334",
+      "kind": "file",
+      "directory": "Tools",
+      "target": "jq.exe"
+    },
+    {
+      "filename": "jq-1.8.1-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/jqlang/jq/jq-1.8.1/COPYING",
+      "sha256": "ad2b4a266b2268939c1446979759706077421cf906a203aa188c6f396e8cfd74",
+      "kind": "file",
+      "directory": "Tools/licenses",
+      "target": "jq-COPYING.txt"
+    }
+  ]
+}

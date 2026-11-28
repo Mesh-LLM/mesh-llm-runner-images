@@ -1,0 +1,25 @@
+set positional-arguments
+
+image:
+    docker build --platform linux/amd64 --file {{justfile_directory()}}/Dockerfile --tag mesh-windows-smoke:local {{justfile_directory()}}
+
+doctor *args:
+    python3 {{justfile_directory()}}/vm.py doctor "$@"
+
+cache-iso *args:
+    python3 {{justfile_directory()}}/cache-iso.py "$@"
+
+cache-rom *args:
+    python3 {{justfile_directory()}}/firmware.py "$@"
+
+prepare *args:
+    python3 {{justfile_directory()}}/vm.py prepare "$@"
+
+publish *args:
+    python3 {{justfile_directory()}}/publish-base.py "$@"
+
+run *args:
+    python3 {{justfile_directory()}}/vm.py run "$@"
+
+check:
+    python3 -m unittest discover -s {{justfile_directory()}}/tests -p 'test_*.py'

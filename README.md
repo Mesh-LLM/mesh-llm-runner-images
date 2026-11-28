@@ -1,5 +1,9 @@
 # MeshLLM runner images
 
+An experimental [Windows GPU smoke launcher](windows/README.md) runs Windows 11
+KVM guests on exclusively reserved Linux AMD64 GPU hosts. It has a separate
+rehearsal contract and does not alter the Linux image cohort or production aliases.
+
 This repository builds full MeshLLM CI images and smaller UI images on the same pinned Actions runner base. Every native-runtime backend is available as a GitHub-hosted job container (`public`) and an image containing the GitHub Actions runner (`self-hosted`):
 
 - `public-cpu-*` / `self-hosted-cpu-*`

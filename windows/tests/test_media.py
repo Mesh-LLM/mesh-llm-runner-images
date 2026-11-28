@@ -1,0 +1,253 @@
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+MODULE = Path(__file__).resolve().parents[1] / "cache-iso.py"
+SPEC = importlib.util.spec_from_file_location("windows_iso_cache", MODULE)
+media = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(media)
+
+
+class MediaCache(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.payload = b"offline ISO cache fixture"
+        self.source = self.root / "supplied.iso"
+        self.source.write_bytes(self.payload)
+        self.args = argparse.Namespace(cache=self.root / "nfs", sha256=hashlib.sha256(self.payload).hexdigest(),
+                                       source=self.source, url_file=None, require_nfs=False)
+
+    def test_atomic_admission_and_offline_reuse(self):
+        destination = media.admit(self.args)
+        self.assertEqual(destination.read_bytes(), self.payload)
+        self.assertEqual(destination.stat().st_mode & 0o222, 0)
+        self.assertFalse(destination.with_name("windows11.iso.part").exists())
+        receipt = json.loads(destination.with_name("media.json").read_text())
+        self.assertEqual(receipt, {"schema": 1, "sha256": self.args.sha256, "size_bytes": len(self.payload)})
+        self.source.unlink()
+        self.args.source = None
+        self.assertEqual(media.admit(self.args), destination)
+
+    def test_corrupt_cache_never_falls_back_to_network(self):
+        destination = media.admit(self.args)
+        destination.chmod(0o644)
+        destination.write_bytes(b"corrupted")
+        with patch.object(media, "download") as download:
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                media.admit(self.args)
+        download.assert_not_called()
+
+    def test_complete_read_only_partial_survives_receipt_failure_and_retries_offline(self):
+        with patch.object(media, 'publish_receipt', side_effect=OSError(28, 'disk full')):
+            with self.assertRaises(OSError):
+                media.admit(self.args)
+        self.source.unlink()
+        self.args.source = None
+        with patch.object(media.shutil, 'copyfileobj') as copy, patch.object(media, 'download') as download:
+            destination = media.admit(self.args)
+        copy.assert_not_called()
+        download.assert_not_called()
+        self.assertEqual(destination.read_bytes(), self.payload)
+        self.assertEqual(destination.stat().st_mode & 0o222, 0)
+
+    def test_expired_link_retains_partial_and_fresh_link_resumes(self):
+        self.args.source = None
+        self.args.url_file = self.root / "url.txt"
+        self.args.url_file.write_text("https://software.download.prss.microsoft.com/windows.iso?token=expired")
+        calls = []
+
+        def curl(args, **kwargs):
+            self.assertNotIn("token=", " ".join(map(str, args)))
+            calls.append(kwargs["input"])
+            descriptor = kwargs['pass_fds'][0]
+            self.assertEqual(args[args.index('--output') + 1], f'/dev/fd/{descriptor}')
+            if len(calls) == 1:
+                os.write(descriptor, self.payload[:5])
+                return subprocess.CompletedProcess(args, 22, "", "sensitive URL must not escape")
+            self.assertEqual(os.pread(descriptor, 100, 0), self.payload[:5])
+            os.ftruncate(descriptor, 0)
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            os.write(descriptor, self.payload)
+            self.assertIn("--continue-at", args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        with patch.object(media.subprocess, "run", curl):
+            with self.assertRaisesRegex(RuntimeError, "fresh link") as failure:
+                media.admit(self.args)
+            self.assertNotIn("token=", str(failure.exception))
+            self.args.url_file.write_text("https://software.download.prss.microsoft.com/windows.iso?token=fresh")
+            destination = media.admit(self.args)
+        self.assertEqual(destination.read_bytes(), self.payload)
+        self.assertNotIn("token=", destination.with_name("media.json").read_text())
+
+    def test_bad_download_is_not_published_or_resumed(self):
+        self.args.source = None
+        self.args.url_file = self.root / "url.txt"
+        self.args.url_file.write_text("https://example.com/windows.iso")
+
+        def download(_, partial):
+            partial.seek(0)
+            partial.truncate()
+            partial.write(b"wrong ISO")
+            partial.flush()
+
+        with patch.object(media, "download", download):
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                media.admit(self.args)
+        entry = self.args.cache / "media/sha256" / self.args.sha256
+        self.assertFalse((entry / "windows11.iso").exists())
+        self.assertFalse((entry / "windows11.iso.part").exists())
+
+    def test_staging_symlinks_hard_links_and_nonregular_files_do_not_change_their_targets(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        victim = self.root / 'unrelated'
+        victim.write_bytes(b'preserve')
+        victim.chmod(0o444)
+        for kind in ['symlink', 'hardlink', 'directory', 'fifo']:
+            with self.subTest(kind=kind):
+                if kind == 'symlink':
+                    partial.symlink_to(victim)
+                elif kind == 'hardlink':
+                    os.link(victim, partial)
+                elif kind == 'directory':
+                    partial.mkdir()
+                else:
+                    os.mkfifo(partial)
+                try:
+                    with self.assertRaises((OSError, ValueError)):
+                        media.admit(self.args)
+                    self.assertEqual(victim.read_bytes(), b'preserve')
+                    self.assertEqual(victim.stat().st_mode & 0o777, 0o444)
+                finally:
+                    partial.rmdir() if kind == 'directory' else partial.unlink()
+
+    def test_readonly_incomplete_staging_is_replaced_without_chmodding_the_old_inode(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        partial.write_bytes(self.payload[:5])
+        partial.chmod(0o444)
+        with partial.open('rb') as original:
+            destination = media.admit(self.args)
+            self.assertEqual(original.read(), self.payload[:5])
+            self.assertEqual(os.fstat(original.fileno()).st_mode & 0o777, 0o444)
+        self.assertEqual(destination.read_bytes(), self.payload)
+
+    def test_writable_partial_resumes_without_duplicating_its_prefix(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        partial.write_bytes(self.payload[:5])
+        identity = partial.stat().st_ino
+        self.args.source = None
+        self.args.url_file = self.root / 'unused-url'
+        def download(_, stream):
+            self.assertEqual(os.fstat(stream.fileno()).st_ino, identity)
+            stream.seek(0, os.SEEK_END)
+            stream.write(self.payload[5:])
+            stream.flush()
+        with patch.object(media.shutil, 'copyfileobj', side_effect=OSError(28, 'no space for a duplicate')) as copy, \
+                patch.object(media, 'download', download):
+            destination = media.admit(self.args)
+        copy.assert_not_called()
+        self.assertEqual(destination.stat().st_ino, identity)
+        self.assertEqual(destination.read_bytes(), self.payload)
+
+    def test_readonly_prefix_descriptor_is_closed_before_resumed_download(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        partial.write_bytes(self.payload[:5])
+        partial.chmod(0o444)
+        self.args.source = None
+        self.args.url_file = self.root / 'unused-url'
+        opened = []
+        fdopen = media.os.fdopen
+        def record(descriptor, mode):
+            stream = fdopen(descriptor, mode)
+            if mode == 'rb':
+                opened.append(stream)
+            return stream
+        def download(_, stream):
+            self.assertTrue(opened)
+            self.assertTrue(all(old.closed for old in opened))
+            stream.seek(0, os.SEEK_END)
+            stream.write(self.payload[5:])
+            stream.flush()
+        with patch.object(media.os, 'fdopen', record), patch.object(media, 'download', download):
+            self.assertEqual(media.admit(self.args).read_bytes(), self.payload)
+
+    def test_reopening_a_writable_partial_cannot_follow_a_replaced_path(self):
+        entry = self.args.cache / 'media/sha256' / self.args.sha256
+        entry.mkdir(parents=True)
+        partial = entry / 'windows11.iso.part'
+        partial.write_bytes(self.payload[:5])
+        victim = self.root / 'unrelated'
+        victim.write_bytes(b'preserve')
+        victim.chmod(0o444)
+        open_regular = media.open_regular
+        def swap(directory, name, flags, mode=0o600):
+            if name == 'windows11.iso.part' and flags == os.O_RDWR:
+                partial.unlink()
+                partial.symlink_to(victim)
+            return open_regular(directory, name, flags, mode)
+        with patch.object(media, 'open_regular', swap):
+            with self.assertRaises(OSError):
+                media.admit(self.args)
+        self.assertEqual(victim.read_bytes(), b'preserve')
+        self.assertEqual(victim.stat().st_mode & 0o777, 0o444)
+
+    def test_path_swap_during_copy_never_redirects_a_staging_write(self):
+        victim = self.root / 'unrelated'
+        victim.write_bytes(b'preserve')
+        victim.chmod(0o444)
+        copy = media.shutil.copyfileobj
+        def replace_path(source, destination):
+            partial = self.args.cache / 'media/sha256' / self.args.sha256 / 'windows11.iso.part'
+            partial.unlink()
+            partial.symlink_to(victim)
+            copy(source, destination)
+        with patch.object(media.shutil, 'copyfileobj', replace_path):
+            with self.assertRaisesRegex(ValueError, 'staging changed'):
+                media.admit(self.args)
+        self.assertEqual(victim.read_bytes(), b'preserve')
+        self.assertEqual(victim.stat().st_mode & 0o777, 0o444)
+
+    def test_local_filesystem_cannot_satisfy_nfs_requirement(self):
+        self.args.require_nfs = True
+        with patch.object(media.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ext4\n", "")):
+            with self.assertRaisesRegex(ValueError, "NFS"):
+                media.admit(self.args)
+        self.assertFalse(self.args.cache.exists())
+
+    def test_automount_stub_requires_a_real_nfs_mount(self):
+        self.args.require_nfs = True
+        for filesystem in ["autofs\n", "autofs\next4\n", "nfs\next4\n"]:
+            with patch.object(media.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, filesystem, "")):
+                with self.assertRaisesRegex(ValueError, "NFS"):
+                    media.admit(self.args)
+        with patch.object(media.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "autofs\nnfs\n", "")):
+            self.assertEqual(media.admit(self.args).read_bytes(), self.payload)
+
+    def test_second_lab_can_admit_the_same_bytes_independently(self):
+        first = media.admit(self.args)
+        self.args.cache = self.root / "second-lab"
+        self.args.source = first
+        second = media.admit(self.args)
+        self.assertNotEqual(first, second)
+        self.assertEqual(media.digest(first), media.digest(second))
+
+
+if __name__ == "__main__":
+    unittest.main()

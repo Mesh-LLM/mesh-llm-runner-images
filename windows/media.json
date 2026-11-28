@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "product": "Windows 11 multi-edition",
+  "release": "26H2",
+  "architecture": "x86_64",
+  "language": "en-US",
+  "filename": "Windows11_Client_x64_en-us_26300_9457.iso",
+  "sha256": "bd4307df32bc8af33b39ccecb1174aeb345386630f89a2b86c7a4e36b55ea650",
+  "verification_page": "https://www.microsoft.com/en-us/software-download/windows11"
+}
